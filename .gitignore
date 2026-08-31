@@ -1,0 +1,23 @@
+# Local configuration and planning artifacts
+.env
+.env.*
+!.env.example
+AGENTS.md
+docs/
+.codex/
+.agents/
+.worktrees/
+
+# Python environments, caches, and build artifacts
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.py[cod]
+build/
+dist/
+*.egg-info/
+
+# Editor configuration
+.vscode/
+.idea/
