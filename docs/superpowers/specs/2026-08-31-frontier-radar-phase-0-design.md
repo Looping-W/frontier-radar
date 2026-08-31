@@ -1,74 +1,60 @@
-# Frontier Radar Phase 0 Design
+# Frontier Radar Phase 0 设计
 
-## Scope
+## 范围
 
-Phase 0 creates only the CLI foundation for Frontier Radar. It includes local
-MySQL configuration and connectivity, Alembic migration infrastructure, two
-Typer commands, tests, Ruff, and project documentation. It does not implement
-collectors, Agent behavior, web APIs, a frontend, scheduled work, or database
-domain tables.
+Phase 0 仅为 Frontier Radar 建立 CLI 基础：本机 MySQL 配置与连接、
+Alembic 迁移基础设施、两个 Typer 命令、测试、Ruff 与项目文档。本阶段不实现
+采集器、Agent 行为、Web API、前端、定时任务或业务领域数据表。
 
-## Project layout
+## 项目结构
 
-The project uses a `src/` layout and a `frontier_radar` package. The Phase 0
-modules are intentionally small and have these responsibilities:
+项目采用 `src/` 布局，应用包名为 `frontier_radar`。Phase 0 中各模块保持精简，
+职责如下：
 
-- `core`: Pydantic settings that read and validate `MYSQL_*` environment
-  variables.
-- `db`: SQLAlchemy engine and session-factory construction, plus the Alembic
-  metadata base.
-- `repositories`: database-only operations. The initial health repository runs
-  `SELECT 1`.
-- `services`: application behavior. The health service combines the application
-  and database checks into a result usable by the CLI.
-- `cli`: Typer command definitions and presentation only. Commands do not
-  contain SQL or business logic.
+- `core`：使用 Pydantic 读取并校验 `MYSQL_*` 环境变量。
+- `db`：创建 SQLAlchemy Engine 和会话工厂，并提供 Alembic 所需的元数据基类。
+- `repositories`：仅处理数据库访问。初始健康检查仓储执行 `SELECT 1`。
+- `services`：处理应用行为。健康检查服务将应用状态和数据库状态组合为 CLI 可用的结果。
+- `cli`：仅定义 Typer 命令与输出展示；命令中不包含 SQL 或业务逻辑。
 
-Future `models`, `schemas`, `collectors`, and `agents` areas are documented in
-`AGENTS.md` but are not implemented or populated in Phase 0.
+未来的 `models`、`schemas`、`collectors` 和 `agents` 分层会在 `AGENTS.md`
+中说明，但 Phase 0 不创建或填充这些模块。
 
-## Configuration and database
+## 配置与数据库
 
-`.env.example` documents `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_DATABASE`,
-`MYSQL_USER`, and `MYSQL_PASSWORD`, using `frontier_radar` as the example
-database name. A real `.env` is neither created nor committed. The application
-reads process environment variables; users may optionally load them with their
-own local environment tooling.
+`.env.example` 说明 `MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_DATABASE`、
+`MYSQL_USER` 和 `MYSQL_PASSWORD`，并以 `frontier_radar` 作为示例数据库名。
+不会创建或提交真实 `.env`；应用仅从进程环境变量读取配置，用户可自行通过本地
+环境工具加载变量。
 
-The user creates the local MySQL database separately. SQLAlchemy uses the
-MySQL PyMySQL driver and creates sessions through a dedicated session factory.
-All later schema changes must be represented by Alembic revisions.
+本机 MySQL 数据库由用户单独创建。SQLAlchemy 使用 MySQL PyMySQL 驱动，并通过
+独立的会话工厂获取数据库会话。今后所有数据表结构变更必须通过 Alembic revision
+执行。
 
-## Commands and behavior
+## 命令与行为
 
-`fradar health` calls `HealthService`, which calls the database health
-repository. It prints an application status and a database status. Valid
-configuration and a successful `SELECT 1` produce exit code 0. Missing
-configuration or a connection/query error produces a concise diagnostic and a
-non-zero exit code.
+`fradar health` 调用 `HealthService`，再由服务调用数据库健康检查仓储。命令输出
+应用状态和数据库状态。配置有效且 `SELECT 1` 成功时，退出码为 0；配置缺失、连接
+或查询失败时，输出简洁的错误原因并以非零退出码结束。
 
-`fradar db-upgrade` invokes Alembic to upgrade the configured database to
-`head`. The initial Alembic revision is a no-op baseline: it establishes
-migration tracking without creating Phase 1+ tables.
+`fradar db-upgrade` 调用 Alembic，将已配置的数据库升级到 `head`。初始 Alembic
+revision 为无操作的基线迁移：它建立迁移版本追踪，不创建 Phase 1 及以后阶段的表。
 
-## Errors and test strategy
+## 错误处理与测试策略
 
-Configuration errors and database connection errors are represented at the
-service boundary so the CLI can render them consistently. The database health
-repository contains the SQLAlchemy-specific exception handling.
+配置错误和数据库连接错误在服务层形成统一的健康检查结果，使 CLI 可以一致地展示。
+数据库健康检查仓储负责处理 SQLAlchemy 相关异常。
 
-Pytest tests the health command/service behavior with a replaceable repository
-dependency, covering both successful and unavailable database states without
-requiring a local MySQL server. Ruff runs against application and test code.
+Pytest 通过可替换的仓储依赖，测试健康检查命令与服务在数据库可用、不可用两种状态
+下的行为，不要求测试机器运行本机 MySQL。Ruff 对应用代码和测试代码执行静态检查。
 
-## Documentation and repository
+## 文档与仓库
 
-The root `AGENTS.md` uses the user-supplied project rules unchanged.
-`docs/PROJECT_PLAN.md` records the user-supplied Phase 0–7 roadmap.
-`docs/PROJECT_STATUS.md` begins with exactly:
+根目录 `AGENTS.md` 按用户提供的项目规则原样写入。
+`docs/PROJECT_PLAN.md` 记录用户提供的 Phase 0–7 路线图。
+`docs/PROJECT_STATUS.md` 必须以以下内容作为初始状态：
 
 `Current phase: Phase 0 — CLI initialization`
 
-The local repository is initialized with Git, then published as a public
-GitHub repository named `frontier-radar` after GitHub authentication is
-confirmed.
+项目会先初始化为本地 Git 仓库；确认 GitHub 身份验证可用后，再创建并推送名为
+`frontier-radar` 的公开 GitHub 远程仓库。
