@@ -8,9 +8,11 @@ from frontier_radar.core.settings import Settings
 from frontier_radar.db.session import create_engine_and_session_factory
 from frontier_radar.repositories.collection import CollectionSnapshotRepository
 from frontier_radar.repositories.health import DatabaseHealthRepository
+from frontier_radar.repositories.normalization import NormalizationRepository
 from frontier_radar.services.collection import CollectionService
 from frontier_radar.services.health import HealthService
 from frontier_radar.services.migrations import MigrationService
+from frontier_radar.services.normalization import NormalizationService
 
 app = typer.Typer(help="Frontier Radar technology intelligence CLI.")
 collect_app = typer.Typer(help="Collect public technology updates.")
@@ -39,6 +41,13 @@ def get_collection_service() -> CollectionService:
         HackerNewsCollector(client),
         ArxivCollector(client),
     )
+
+
+def get_normalization_service() -> NormalizationService:
+    """Assemble dependencies used by the saved-snapshot normalization command."""
+    settings = Settings()
+    _, session_factory = create_engine_and_session_factory(settings)
+    return NormalizationService(NormalizationRepository(session_factory))
 
 
 @app.command()
@@ -112,3 +121,20 @@ def collect_all() -> None:
     except Exception as error:
         typer.echo(f"Collection failed: {error}")
         raise typer.Exit(code=1) from error
+
+
+@app.command("normalize")
+def normalize() -> None:
+    """Parse saved snapshots into traceable, deduplicated articles."""
+    try:
+        result = get_normalization_service().normalize()
+    except Exception as error:
+        typer.echo(f"Normalization failed: {error}")
+        raise typer.Exit(code=1) from error
+    typer.echo(
+        f"Normalization: {result.snapshots_processed} snapshots processed; "
+        f"{result.raw_items_parsed} raw items parsed; "
+        f"{result.raw_items_created} raw items saved; "
+        f"{result.articles_created} articles created; "
+        f"{result.merged_items} items merged."
+    )

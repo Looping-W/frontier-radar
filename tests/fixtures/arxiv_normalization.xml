@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <id>http://arxiv.org/api/query</id>
+  <updated>2026-09-01T00:00:00Z</updated>
+  <entry>
+    <id>http://arxiv.org/abs/2609.00001</id>
+    <title>
+      Agent systems
+    </title>
+    <published>2026-09-01T01:02:03Z</published>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2609.00002</id>
+    <title>Language models</title>
+    <published>2026-09-01T02:03:04Z</published>
+  </entry>
+</feed>
