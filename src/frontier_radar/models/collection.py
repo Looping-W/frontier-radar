@@ -1,6 +1,14 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -61,3 +69,69 @@ class RawItemRecord(Base):
     published_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+class InterestProfileRecord(Base):
+    """One saved set of weighted interests, ready for future multi-profile use."""
+
+    __tablename__ = "interest_profiles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(128))
+    slug: Mapped[str] = mapped_column(String(128), unique=True)
+
+
+class InterestTopicRecord(Base):
+    """A profile-owned topic that contributes a deterministic ranking weight."""
+
+    __tablename__ = "interest_topics"
+    __table_args__ = (
+        UniqueConstraint("profile_id", "name_key"),
+        CheckConstraint(
+            "weight >= 1 AND weight <= 5",
+            name="ck_interest_topics_weight_range",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    profile_id: Mapped[int] = mapped_column(
+        ForeignKey("interest_profiles.id"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(512))
+    name_key: Mapped[str] = mapped_column(String(512))
+    weight: Mapped[int] = mapped_column(Integer)
+
+
+class InterestKeywordRecord(Base):
+    """A profile-owned keyword that contributes a deterministic ranking weight."""
+
+    __tablename__ = "interest_keywords"
+    __table_args__ = (
+        UniqueConstraint("profile_id", "name_key"),
+        CheckConstraint(
+            "weight >= 1 AND weight <= 5",
+            name="ck_interest_keywords_weight_range",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    profile_id: Mapped[int] = mapped_column(
+        ForeignKey("interest_profiles.id"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(512))
+    name_key: Mapped[str] = mapped_column(String(512))
+    weight: Mapped[int] = mapped_column(Integer)
+
+
+class ArticleRankingRecord(Base):
+    """One persisted relevance score for an article in one interest profile."""
+
+    __tablename__ = "article_rankings"
+    __table_args__ = (UniqueConstraint("profile_id", "article_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    profile_id: Mapped[int] = mapped_column(
+        ForeignKey("interest_profiles.id"), index=True
+    )
+    article_id: Mapped[int] = mapped_column(ForeignKey("articles.id"), index=True)
+    score: Mapped[int] = mapped_column(Integer)

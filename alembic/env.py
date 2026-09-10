@@ -6,8 +6,12 @@ from alembic import context
 from frontier_radar.core.settings import Settings
 from frontier_radar.db.base import Base
 from frontier_radar.models import (  # noqa: F401
+    ArticleRankingRecord,
     ArticleRecord,
     CollectionSnapshotRecord,
+    InterestKeywordRecord,
+    InterestProfileRecord,
+    InterestTopicRecord,
     RawItemRecord,
 )
 

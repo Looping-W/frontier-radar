@@ -1,0 +1,22 @@
+[
+  {
+    "article_id": 10,
+    "title": "AI Agent guide",
+    "source_titles": ["AI Agent guide", "AI Agent discussion"]
+  },
+  {
+    "article_id": 11,
+    "title": "Tool calling patterns",
+    "source_titles": ["A practical tool calling tutorial"]
+  },
+  {
+    "article_id": 12,
+    "title": "AI agent calls external tools",
+    "source_titles": ["Tool Calling explained for AI agents"]
+  },
+  {
+    "article_id": 13,
+    "title": "Database migration notes",
+    "source_titles": ["SQL schema changes"]
+  }
+]

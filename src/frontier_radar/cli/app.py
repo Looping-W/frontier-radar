@@ -8,15 +8,31 @@ from frontier_radar.core.settings import Settings
 from frontier_radar.db.session import create_engine_and_session_factory
 from frontier_radar.repositories.collection import CollectionSnapshotRepository
 from frontier_radar.repositories.health import DatabaseHealthRepository
+from frontier_radar.repositories.interests import InterestRepository
 from frontier_radar.repositories.normalization import NormalizationRepository
+from frontier_radar.repositories.ranking import RankingRepository
+from frontier_radar.schemas.interests import (
+    InterestNameInput,
+    InterestTerm,
+    WeightedInterestInput,
+)
 from frontier_radar.services.collection import CollectionService
 from frontier_radar.services.health import HealthService
+from frontier_radar.services.interests import InterestService
 from frontier_radar.services.migrations import MigrationService
 from frontier_radar.services.normalization import NormalizationService
+from frontier_radar.services.ranking import RankingService
+from frontier_radar.services.refresh import RefreshService
 
 app = typer.Typer(help="Frontier Radar technology intelligence CLI.")
 collect_app = typer.Typer(help="Collect public technology updates.")
+interest_app = typer.Typer(help="Manage the default local interest profile.")
+topic_app = typer.Typer(help="Manage weighted interest topics.")
+keyword_app = typer.Typer(help="Manage weighted interest keywords.")
 app.add_typer(collect_app, name="collect")
+app.add_typer(interest_app, name="interest")
+interest_app.add_typer(topic_app, name="topic")
+interest_app.add_typer(keyword_app, name="keyword")
 
 
 @app.callback()
@@ -48,6 +64,63 @@ def get_normalization_service() -> NormalizationService:
     settings = Settings()
     _, session_factory = create_engine_and_session_factory(settings)
     return NormalizationService(NormalizationRepository(session_factory))
+
+
+def get_interest_service() -> InterestService:
+    """Assemble dependencies used by default-profile interest commands."""
+    settings = Settings()
+    _, session_factory = create_engine_and_session_factory(settings)
+    return InterestService(InterestRepository(session_factory))
+
+
+def get_ranking_service() -> RankingService:
+    """Assemble dependencies used by deterministic default-profile ranking."""
+    settings = Settings()
+    _, session_factory = create_engine_and_session_factory(settings)
+    return RankingService(
+        InterestRepository(session_factory),
+        RankingRepository(session_factory),
+    )
+
+
+def get_refresh_service() -> RefreshService:
+    """Assemble the existing fixed pipeline for the refresh command."""
+    return RefreshService(
+        get_collection_service(),
+        get_normalization_service(),
+        get_ranking_service(),
+    )
+
+
+def weighted_interest_input(name: str, weight: int) -> WeightedInterestInput:
+    """Validate one CLI term and convert Pydantic errors into CLI usage errors."""
+    try:
+        return WeightedInterestInput(name=name, weight=weight)
+    except ValidationError as error:
+        raise typer.BadParameter(error.errors()[0]["msg"]) from error
+
+
+def interest_name_input(name: str) -> InterestNameInput:
+    """Validate one CLI term name and convert Pydantic errors into usage errors."""
+    try:
+        return InterestNameInput(name=name)
+    except ValidationError as error:
+        raise typer.BadParameter(error.errors()[0]["msg"]) from error
+
+
+def echo_saved_interest(label: str, term: InterestTerm) -> None:
+    """Print a concise result for an added or updated weighted interest."""
+    typer.echo(f"{label} saved: {term.name} (weight {term.weight}).")
+
+
+def echo_interest_terms(label: str, terms: list[InterestTerm]) -> None:
+    """Print a stable readable listing of one interest-term kind."""
+    if not terms:
+        typer.echo(f"{label}: none.")
+        return
+    typer.echo(f"{label}:")
+    for term in terms:
+        typer.echo(f"- {term.name} (weight {term.weight})")
 
 
 @app.command()
@@ -138,3 +211,141 @@ def normalize() -> None:
         f"{result.articles_created} articles created; "
         f"{result.merged_items} items merged."
     )
+
+
+@app.command("rank")
+def rank() -> None:
+    """Calculate and persist deterministic article relevance for the default profile."""
+    try:
+        result = get_ranking_service().rank_default_profile()
+    except Exception as error:
+        typer.echo(f"Ranking failed: {error}")
+        raise typer.Exit(code=1) from error
+    typer.echo(
+        f"Ranking: {result.articles_scored} articles scored; "
+        f"{len(result.rankings)} relevant articles."
+    )
+    for ranking in result.rankings:
+        typer.echo(f"{ranking.score} | {ranking.article_id} | {ranking.title}")
+
+
+@app.command("refresh")
+def refresh() -> None:
+    """Collect sources, normalize snapshots, and rank default-profile articles."""
+    try:
+        result = get_refresh_service().refresh()
+    except Exception as error:
+        typer.echo(f"Refresh failed: {error}")
+        raise typer.Exit(code=1) from error
+    typer.echo(f"Refresh: {len(result.collection_results)} source runs collected.")
+    for collection_result in result.collection_results:
+        echo_collection_result(collection_result)
+    normalization = result.normalization
+    typer.echo(
+        f"Normalization: {normalization.snapshots_processed} snapshots processed; "
+        f"{normalization.raw_items_parsed} raw items parsed; "
+        f"{normalization.raw_items_created} raw items saved; "
+        f"{normalization.articles_created} articles created; "
+        f"{normalization.merged_items} items merged."
+    )
+    ranking = result.ranking
+    typer.echo(
+        f"Ranking: {ranking.articles_scored} articles scored; "
+        f"{len(ranking.rankings)} relevant articles."
+    )
+    for article in ranking.rankings:
+        typer.echo(f"{article.score} | {article.article_id} | {article.title}")
+
+
+@topic_app.command("add")
+def add_topic(
+    name: str,
+    weight: int = typer.Option(..., "--weight", help="Positive topic weight."),
+) -> None:
+    """Add or update a weighted topic in the default profile."""
+    try:
+        term = get_interest_service().add_topic(weighted_interest_input(name, weight))
+    except ValueError as error:
+        typer.echo(f"Interest failed: {error}")
+        raise typer.Exit(code=1) from error
+    echo_saved_interest("Topic", term)
+
+
+@topic_app.command("list")
+def list_topics() -> None:
+    """List weighted topics in the default profile."""
+    echo_interest_terms("Topics", get_interest_service().list_topics())
+
+
+@topic_app.command("update")
+def update_topic(
+    name: str,
+    weight: int = typer.Option(..., "--weight", help="Positive topic weight."),
+) -> None:
+    """Change the weight of an existing default-profile topic."""
+    try:
+        term = get_interest_service().update_topic(
+            weighted_interest_input(name, weight)
+        )
+    except ValueError as error:
+        typer.echo(f"Interest failed: {error}")
+        raise typer.Exit(code=1) from error
+    echo_saved_interest("Topic", term)
+
+
+@topic_app.command("remove")
+def remove_topic(name: str) -> None:
+    """Remove an existing topic from the default profile."""
+    try:
+        term = get_interest_service().remove_topic(interest_name_input(name))
+    except ValueError as error:
+        typer.echo(f"Interest failed: {error}")
+        raise typer.Exit(code=1) from error
+    typer.echo(f"Topic removed: {term.name}.")
+
+
+@keyword_app.command("add")
+def add_keyword(
+    name: str,
+    weight: int = typer.Option(..., "--weight", help="Positive keyword weight."),
+) -> None:
+    """Add or update a weighted keyword in the default profile."""
+    try:
+        term = get_interest_service().add_keyword(weighted_interest_input(name, weight))
+    except ValueError as error:
+        typer.echo(f"Interest failed: {error}")
+        raise typer.Exit(code=1) from error
+    echo_saved_interest("Keyword", term)
+
+
+@keyword_app.command("list")
+def list_keywords() -> None:
+    """List weighted keywords in the default profile."""
+    echo_interest_terms("Keywords", get_interest_service().list_keywords())
+
+
+@keyword_app.command("update")
+def update_keyword(
+    name: str,
+    weight: int = typer.Option(..., "--weight", help="Positive keyword weight."),
+) -> None:
+    """Change the weight of an existing default-profile keyword."""
+    try:
+        term = get_interest_service().update_keyword(
+            weighted_interest_input(name, weight)
+        )
+    except ValueError as error:
+        typer.echo(f"Interest failed: {error}")
+        raise typer.Exit(code=1) from error
+    echo_saved_interest("Keyword", term)
+
+
+@keyword_app.command("remove")
+def remove_keyword(name: str) -> None:
+    """Remove an existing keyword from the default profile."""
+    try:
+        term = get_interest_service().remove_keyword(interest_name_input(name))
+    except ValueError as error:
+        typer.echo(f"Interest failed: {error}")
+        raise typer.Exit(code=1) from error
+    typer.echo(f"Keyword removed: {term.name}.")
