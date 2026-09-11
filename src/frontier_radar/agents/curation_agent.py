@@ -37,13 +37,19 @@ class CurationAgent:
                 role="system",
                 content=(
                     "Curate only saved local articles. Call list_ranked_articles "
-                    "before selecting articles. Return final JSON with overview and "
-                    "articles; do not return Markdown."
+                    "before selecting articles. Return exactly one final JSON object; "
+                    "do not return Markdown or other text. Its exact shape is "
+                    '{"overview":"20-1000 characters",'
+                    '"articles":[{"article_id":123,"summary":"1-1000 characters",'
+                    '"rationale":"1-1000 characters"}]}. '
+                    "Select one to five unique article_id values from the listed "
+                    "candidates, and include all three fields for every article."
                 ),
             ),
             ModelMessage(role="user", content="Create today's technical daily brief."),
         ]
         candidate_ids: set[int] | None = None
+        correction_attempted = False
         for _ in range(8):
             reply = self._client.complete(messages, self._tools.definitions())
             if reply.tool_calls:
@@ -81,6 +87,26 @@ class CurationAgent:
             try:
                 draft = CurationDraft.model_validate_json(reply.content)
             except ValidationError as error:
+                if not correction_attempted:
+                    correction_attempted = True
+                    messages.extend(
+                        [
+                            ModelMessage(role="assistant", content=reply.content),
+                            ModelMessage(
+                                role="user",
+                                content=(
+                                    "Your previous final response failed local JSON "
+                                    "validation. Return one JSON object in this exact "
+                                    "shape: "
+                                    '{"overview":"...","articles":[{"article_id":123,'
+                                    '"summary":"...","rationale":"..."}]}. '
+                                    "Every selected article must include article_id, "
+                                    "summary, and rationale."
+                                ),
+                            ),
+                        ]
+                    )
+                    continue
                 raise CurationAgentError(f"Invalid curation result: {error}") from error
             if candidate_ids is None:
                 raise CurationAgentError("List ranked articles before final curation")

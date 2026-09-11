@@ -112,3 +112,63 @@ def test_agent_rejects_a_final_article_not_listed_by_local_tool():
 
     with pytest.raises(CurationAgentError, match="not a listed candidate"):
         CurationAgent(Client(), Tools()).run()
+
+
+def test_agent_requests_a_schema_correction_after_a_missing_rationale():
+    """Catches a valid JSON response that omits a required curation field."""
+    from frontier_radar.agents.contracts import ModelReply, ToolCall
+    from frontier_radar.agents.curation_agent import CurationAgent
+
+    class Client:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.correction_messages = None
+
+        def complete(self, messages, tools):
+            self.calls += 1
+            if self.calls == 1:
+                return ModelReply(
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="call_1",
+                            name="list_ranked_articles",
+                            arguments_json='{"limit": 5}',
+                        )
+                    ],
+                )
+            if self.calls == 2:
+                return ModelReply(
+                    content=(
+                        '{"overview":"A sufficiently long saved update overview.",'
+                        '"articles":[{"article_id":12,'
+                        '"summary":"Saved summary."}]}'
+                    ),
+                    tool_calls=[],
+                )
+            self.correction_messages = messages
+            return ModelReply(
+                content=(
+                    '{"overview":"A sufficiently long saved update overview.",'
+                    '"articles":[{"article_id":12,'
+                    '"summary":"Saved summary.",'
+                    '"rationale":"It is highly relevant to the saved profile."}]}'
+                ),
+                tool_calls=[],
+            )
+
+    class Tools:
+        def definitions(self):
+            return []
+
+        def execute(self, name, arguments_json):
+            return '[{"article_id":12,"title":"Agent tools","score":5}]'
+
+    client = Client()
+    draft = CurationAgent(client, Tools()).run()
+
+    assert draft.articles[0].rationale == "It is highly relevant to the saved profile."
+    assert client.calls == 3
+    assert client.correction_messages[-2].role == "assistant"
+    assert client.correction_messages[-1].role == "user"
+    assert "rationale" in client.correction_messages[-1].content
