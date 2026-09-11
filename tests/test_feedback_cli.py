@@ -11,7 +11,7 @@ from frontier_radar.schemas.feedback import ArticleFeedback, FeedbackDecision
     ("command", "decision", "label"),
     [
         ("like", FeedbackDecision.LIKE, "liked"),
-        ("skip", FeedbackDecision.SKIP, "skipped"),
+        ("dislike", FeedbackDecision.SKIP, "disliked"),
     ],
 )
 def test_feedback_commands_delegate_to_service_and_report_saved_choice(
@@ -48,6 +48,30 @@ def test_feedback_commands_delegate_to_service_and_report_saved_choice(
     assert f"Feedback saved: {label} article 12." in invocation.output
 
 
+def test_feedback_skip_command_is_not_available_after_renaming(monkeypatch):
+    """Catches a deprecated skip alias that keeps ambiguous semantics alive."""
+
+    class FakeService:
+        def record(self, feedback):
+            return ArticleFeedback(
+                article_id=feedback.article_id,
+                decision=feedback.decision,
+                recorded_at=datetime(2026, 9, 11, tzinfo=UTC),
+            )
+
+    monkeypatch.setattr(
+        cli_module,
+        "get_feedback_service",
+        lambda: FakeService(),
+        raising=False,
+    )
+
+    invocation = CliRunner().invoke(cli_module.app, ["feedback", "skip", "12"])
+
+    assert invocation.exit_code != 0
+    assert "No such command 'skip'" in invocation.output
+
+
 def test_feedback_list_command_prints_current_choices_in_stable_order(monkeypatch):
     """Catches a feedback listing that bypasses the service's stable output."""
 
@@ -78,4 +102,4 @@ def test_feedback_list_command_prints_current_choices_in_stable_order(monkeypatc
     assert invocation.exit_code == 0
     assert "Feedback:" in invocation.output
     assert "- 10 | liked | 2026-09-11T00:00:00+00:00" in invocation.output
-    assert "- 12 | skipped | 2026-09-11T00:00:00+00:00" in invocation.output
+    assert "- 12 | disliked | 2026-09-11T00:00:00+00:00" in invocation.output

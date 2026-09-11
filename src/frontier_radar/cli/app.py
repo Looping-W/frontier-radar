@@ -216,7 +216,7 @@ def echo_interest_terms(label: str, terms: list[InterestTerm]) -> None:
 
 def feedback_label(decision: FeedbackDecision) -> str:
     """Return concise past-tense terminal copy for one saved decision."""
-    return "liked" if decision is FeedbackDecision.LIKE else "skipped"
+    return "liked" if decision is FeedbackDecision.LIKE else "disliked"
 
 
 def echo_feedback_list(feedback_items) -> None:
@@ -344,9 +344,9 @@ def like_article(article_id: int) -> None:
     _record_feedback(article_id, FeedbackDecision.LIKE)
 
 
-@feedback_app.command("skip")
-def skip_article(article_id: int) -> None:
-    """Record that the default profile skips one currently ranked article."""
+@feedback_app.command("dislike")
+def dislike_article(article_id: int) -> None:
+    """Record explicit negative feedback for one currently ranked article."""
     _record_feedback(article_id, FeedbackDecision.SKIP)
 
 
