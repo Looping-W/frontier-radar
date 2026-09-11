@@ -12,6 +12,7 @@ from frontier_radar.models import (  # noqa: F401
     InterestKeywordRecord,
     InterestProfileRecord,
     InterestTopicRecord,
+    LLMConfigurationRecord,
     RawItemRecord,
 )
 

@@ -1,0 +1,47 @@
+{
+  "profile": {"id": 7, "name": "Default", "slug": "default"},
+  "snapshots": [
+    {
+      "id": 30,
+      "source": "hacker_news",
+      "endpoint": "fixture",
+      "query": null,
+      "fetched_at": "2026-09-11T00:00:00+00:00",
+      "status_code": 200,
+      "content_type": "application/json",
+      "raw_body": "{}"
+    }
+  ],
+  "articles": [
+    {"id": 10, "title": "AI Agent guide", "title_key": "ai agent guide"},
+    {"id": 12, "title": "Agent tools", "title_key": "agent tools"},
+    {"id": 13, "title": "Unranked note", "title_key": "unranked note"}
+  ],
+  "raw_items": [
+    {
+      "id": 20,
+      "snapshot_id": 30,
+      "article_id": 12,
+      "source": "hacker_news",
+      "source_item_id": "hn-12",
+      "title": "Agent tools",
+      "url": "https://example.test/agent-tools",
+      "normalized_url": "https://example.test/agent-tools"
+    },
+    {
+      "id": 21,
+      "snapshot_id": 30,
+      "article_id": 10,
+      "source": "hacker_news",
+      "source_item_id": "hn-10",
+      "title": "AI Agent guide",
+      "url": "https://example.test/agent-guide",
+      "normalized_url": "https://example.test/agent-guide"
+    }
+  ],
+  "rankings": [
+    {"profile_id": 7, "article_id": 10, "score": 3},
+    {"profile_id": 7, "article_id": 12, "score": 5},
+    {"profile_id": 7, "article_id": 13, "score": 0}
+  ]
+}

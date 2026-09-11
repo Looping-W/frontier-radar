@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     mysql_database: str = Field(validation_alias="MYSQL_DATABASE")
     mysql_user: str = Field(validation_alias="MYSQL_USER")
     mysql_password: str = Field(validation_alias="MYSQL_PASSWORD")
+    llm_api_key: str | None = Field(default=None, validation_alias="LLM_API_KEY")
 
     @property
     def database_url(self) -> str:

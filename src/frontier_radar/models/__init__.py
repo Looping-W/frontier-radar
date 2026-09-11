@@ -5,6 +5,7 @@ from frontier_radar.models.collection import (
     InterestKeywordRecord,
     InterestProfileRecord,
     InterestTopicRecord,
+    LLMConfigurationRecord,
     RawItemRecord,
 )
 
@@ -15,5 +16,6 @@ __all__ = [
     "InterestKeywordRecord",
     "InterestProfileRecord",
     "InterestTopicRecord",
+    "LLMConfigurationRecord",
     "RawItemRecord",
 ]

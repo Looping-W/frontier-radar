@@ -135,3 +135,17 @@ class ArticleRankingRecord(Base):
     )
     article_id: Mapped[int] = mapped_column(ForeignKey("articles.id"), index=True)
     score: Mapped[int] = mapped_column(Integer)
+
+
+class LLMConfigurationRecord(Base):
+    """One non-secret model connection configuration for local curation."""
+
+    __tablename__ = "llm_configurations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    slug: Mapped[str] = mapped_column(String(128), unique=True)
+    provider_id: Mapped[str] = mapped_column(String(128))
+    provider_label: Mapped[str] = mapped_column(String(128))
+    api_protocol: Mapped[str] = mapped_column(String(64))
+    base_url: Mapped[str] = mapped_column(String(2048))
+    model_name: Mapped[str] = mapped_column(String(255))

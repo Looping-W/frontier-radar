@@ -2,13 +2,18 @@ import httpx
 import typer
 from pydantic import ValidationError
 
+from frontier_radar.agents.curation_agent import CurationAgent
+from frontier_radar.agents.curation_tools import ReadOnlyCurationTools
+from frontier_radar.agents.openai_compatible import OpenAICompatibleCurationModelClient
 from frontier_radar.collectors.arxiv import ArxivCollector
 from frontier_radar.collectors.hacker_news import HackerNewsCollector
 from frontier_radar.core.settings import Settings
 from frontier_radar.db.session import create_engine_and_session_factory
 from frontier_radar.repositories.collection import CollectionSnapshotRepository
+from frontier_radar.repositories.curation import CurationRepository
 from frontier_radar.repositories.health import DatabaseHealthRepository
 from frontier_radar.repositories.interests import InterestRepository
+from frontier_radar.repositories.llm import LLMConfigurationRepository
 from frontier_radar.repositories.normalization import NormalizationRepository
 from frontier_radar.repositories.ranking import RankingRepository
 from frontier_radar.schemas.interests import (
@@ -16,9 +21,12 @@ from frontier_radar.schemas.interests import (
     InterestTerm,
     WeightedInterestInput,
 )
+from frontier_radar.schemas.llm import LLMConfiguration, LLMConfigurationInput
 from frontier_radar.services.collection import CollectionService
+from frontier_radar.services.curation import CurationService
 from frontier_radar.services.health import HealthService
 from frontier_radar.services.interests import InterestService
+from frontier_radar.services.llm import LLMConfigurationService
 from frontier_radar.services.migrations import MigrationService
 from frontier_radar.services.normalization import NormalizationService
 from frontier_radar.services.ranking import RankingService
@@ -29,10 +37,12 @@ collect_app = typer.Typer(help="Collect public technology updates.")
 interest_app = typer.Typer(help="Manage the default local interest profile.")
 topic_app = typer.Typer(help="Manage weighted interest topics.")
 keyword_app = typer.Typer(help="Manage weighted interest keywords.")
+llm_app = typer.Typer(help="Configure the local curation model.")
 app.add_typer(collect_app, name="collect")
 app.add_typer(interest_app, name="interest")
 interest_app.add_typer(topic_app, name="topic")
 interest_app.add_typer(keyword_app, name="keyword")
+app.add_typer(llm_app, name="llm")
 
 
 @app.callback()
@@ -73,6 +83,35 @@ def get_interest_service() -> InterestService:
     return InterestService(InterestRepository(session_factory))
 
 
+def get_llm_configuration_service() -> LLMConfigurationService:
+    """Assemble dependencies for non-secret curation-model configuration."""
+    settings = Settings()
+    _, session_factory = create_engine_and_session_factory(settings)
+    return LLMConfigurationService(LLMConfigurationRepository(session_factory))
+
+
+def get_curation_service() -> CurationService:
+    """Assemble the configured model and the restricted local curation tools."""
+    settings = Settings()
+    _, session_factory = create_engine_and_session_factory(settings)
+    profiles = InterestRepository(session_factory)
+    repository = CurationRepository(session_factory)
+
+    def agent_factory(configuration, api_key, limit):
+        return CurationAgent(
+            OpenAICompatibleCurationModelClient(configuration, api_key),
+            ReadOnlyCurationTools(profiles, repository, limit),
+        )
+
+    return CurationService(
+        LLMConfigurationService(LLMConfigurationRepository(session_factory)),
+        profiles,
+        repository,
+        settings.llm_api_key,
+        agent_factory,
+    )
+
+
 def get_ranking_service() -> RankingService:
     """Assemble dependencies used by deterministic default-profile ranking."""
     settings = Settings()
@@ -106,6 +145,33 @@ def interest_name_input(name: str) -> InterestNameInput:
         return InterestNameInput(name=name)
     except ValidationError as error:
         raise typer.BadParameter(error.errors()[0]["msg"]) from error
+
+
+def llm_configuration_input(
+    label: str,
+    base_url: str,
+    model: str,
+    protocol: str,
+) -> LLMConfigurationInput:
+    """Validate non-secret CLI configuration without accepting an API key."""
+    try:
+        return LLMConfigurationInput(
+            provider_id="custom",
+            provider_label=label,
+            base_url=base_url,
+            model_name=model,
+            api_protocol=protocol.replace("-", "_"),
+        )
+    except ValidationError as error:
+        raise typer.BadParameter(error.errors()[0]["msg"]) from error
+
+
+def echo_llm_configuration(configuration: LLMConfiguration) -> None:
+    """Print only connection metadata that is safe for a terminal."""
+    typer.echo(f"Provider: {configuration.provider_label}")
+    typer.echo(f"Protocol: {configuration.api_protocol.replace('_', '-')}")
+    typer.echo(f"Endpoint: {configuration.base_url}")
+    typer.echo(f"Model: {configuration.model_name}")
 
 
 def echo_saved_interest(label: str, term: InterestTerm) -> None:
@@ -349,3 +415,49 @@ def remove_keyword(name: str) -> None:
         typer.echo(f"Interest failed: {error}")
         raise typer.Exit(code=1) from error
     typer.echo(f"Keyword removed: {term.name}.")
+
+
+@llm_app.command("configure")
+def configure_llm(
+    label: str = typer.Option(..., "--label", help="Display name for this provider."),
+    base_url: str = typer.Option(..., "--base-url", help="HTTPS model API endpoint."),
+    model: str = typer.Option(..., "--model", help="Provider model identifier."),
+    protocol: str = typer.Option(
+        "openai-compatible",
+        "--protocol",
+        help="Supported model API protocol.",
+    ),
+) -> None:
+    """Save non-secret custom OpenAI-compatible model metadata."""
+    try:
+        configuration = get_llm_configuration_service().configure(
+            llm_configuration_input(label, base_url, model, protocol)
+        )
+    except ValueError as error:
+        typer.echo(f"LLM configuration failed: {error}")
+        raise typer.Exit(code=1) from error
+    typer.echo("LLM configuration saved.")
+    echo_llm_configuration(configuration)
+
+
+@llm_app.command("show")
+def show_llm() -> None:
+    """Show saved non-secret curation-model metadata."""
+    configuration = get_llm_configuration_service().show()
+    if configuration is None:
+        typer.echo("LLM configuration: none.")
+        return
+    echo_llm_configuration(configuration)
+
+
+@app.command("digest")
+def digest(
+    limit: int = typer.Option(10, "--limit", min=1, max=20),
+) -> None:
+    """Create a structured, locally grounded Markdown daily brief."""
+    try:
+        result = get_curation_service().create_digest(limit)
+    except Exception as error:
+        typer.echo(f"Curation failed: {error}")
+        raise typer.Exit(code=1) from error
+    typer.echo(result.markdown)

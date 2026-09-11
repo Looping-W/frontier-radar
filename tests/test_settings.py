@@ -32,3 +32,15 @@ def test_session_factory_uses_configured_mysql_database(monkeypatch):
     assert session_factory.kw["autoflush"] is False
     assert session_factory.kw["expire_on_commit"] is False
     engine.dispose()
+
+
+def test_settings_defers_missing_llm_key_until_a_digest_runs(monkeypatch):
+    """Catches unrelated commands failing merely because curation lacks a key."""
+    monkeypatch.setenv("MYSQL_HOST", "db.local")
+    monkeypatch.setenv("MYSQL_PORT", "3307")
+    monkeypatch.setenv("MYSQL_DATABASE", "frontier_radar")
+    monkeypatch.setenv("MYSQL_USER", "radar")
+    monkeypatch.setenv("MYSQL_PASSWORD", "secret")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+    assert Settings().llm_api_key is None

@@ -1,0 +1,10 @@
+[
+  {
+    "tool_calls": [
+      {"id": "call_1", "name": "list_ranked_articles", "arguments_json": "{\"limit\": 5}"}
+    ]
+  },
+  {
+    "content": "{\"overview\": \"Agent tooling and implementation guidance lead today's saved updates.\", \"articles\": [{\"article_id\": 12, \"summary\": \"A saved article about agent tools.\", \"rationale\": \"It has the strongest local relevance score.\"}]}"
+  }
+]
