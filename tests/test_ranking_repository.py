@@ -1,5 +1,6 @@
 import importlib
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import pytest
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from frontier_radar.db.base import Base
 from frontier_radar.models.collection import (
+    ArticleFeedbackRecord,
     ArticleRankingRecord,
     ArticleRecord,
     CollectionSnapshotRecord,
@@ -19,6 +21,15 @@ from frontier_radar.models.collection import (
     RawItemRecord,
 )
 from frontier_radar.schemas.ranking import RankedArticle
+
+
+@dataclass(frozen=True)
+class Adjustment:
+    """The repository-facing adjustment value expected from ranking service."""
+
+    rule_id: int
+    kind: str
+    adjustment: int
 
 
 @compiles(LONGTEXT, "sqlite")
@@ -146,3 +157,53 @@ def test_repository_reads_traceable_ranking_inputs_and_replaces_profile_scores(
     ]
     assert (raw_item.article_id, raw_item.snapshot_id) == (1, 1)
     assert snapshot_count == 1
+
+
+def test_repository_reads_feedback_articles_and_replaces_only_adjustments(
+    session_factory: Callable[[], Session],
+):
+    """Catches hidden manual-weight writes or untraceable feedback scoring input."""
+    module = importlib.import_module("frontier_radar.repositories.ranking")
+    repository = module.RankingRepository(session_factory)
+    with session_factory() as session:
+        session.add_all(
+            [
+                ArticleFeedbackRecord(
+                    profile_id=1,
+                    article_id=1,
+                    decision="like",
+                    recorded_at=datetime(2026, 9, 11, tzinfo=UTC),
+                ),
+                ArticleFeedbackRecord(
+                    profile_id=1,
+                    article_id=2,
+                    decision="skip",
+                    recorded_at=datetime(2026, 9, 11, tzinfo=UTC),
+                ),
+            ]
+        )
+        session.commit()
+
+    feedback_articles = repository.list_feedback_articles(1)
+    repository.replace_feedback_adjustments(
+        1,
+        [
+            Adjustment(rule_id=1, kind="topic", adjustment=2),
+            Adjustment(rule_id=1, kind="keyword", adjustment=-2),
+        ],
+    )
+
+    assert [
+        (article.article_id, article.decision, article.source_titles)
+        for article in feedback_articles
+    ] == [
+        (1, "like", ["Tool calling raw source title"]),
+        (2, "skip", []),
+    ]
+    with session_factory() as session:
+        topic = session.scalar(select(InterestTopicRecord))
+        keyword = session.scalar(select(InterestKeywordRecord))
+        raw_item = session.scalar(select(RawItemRecord))
+    assert (topic.weight, topic.feedback_adjustment) == (3, 2)
+    assert (keyword.weight, keyword.feedback_adjustment) == (2, -2)
+    assert raw_item.article_id == 1

@@ -11,11 +11,13 @@ from frontier_radar.core.settings import Settings
 from frontier_radar.db.session import create_engine_and_session_factory
 from frontier_radar.repositories.collection import CollectionSnapshotRepository
 from frontier_radar.repositories.curation import CurationRepository
+from frontier_radar.repositories.feedback import FeedbackRepository
 from frontier_radar.repositories.health import DatabaseHealthRepository
 from frontier_radar.repositories.interests import InterestRepository
 from frontier_radar.repositories.llm import LLMConfigurationRepository
 from frontier_radar.repositories.normalization import NormalizationRepository
 from frontier_radar.repositories.ranking import RankingRepository
+from frontier_radar.schemas.feedback import FeedbackDecision, FeedbackInput
 from frontier_radar.schemas.interests import (
     InterestNameInput,
     InterestTerm,
@@ -24,6 +26,7 @@ from frontier_radar.schemas.interests import (
 from frontier_radar.schemas.llm import LLMConfiguration, LLMConfigurationInput
 from frontier_radar.services.collection import CollectionService
 from frontier_radar.services.curation import CurationService
+from frontier_radar.services.feedback import FeedbackService
 from frontier_radar.services.health import HealthService
 from frontier_radar.services.interests import InterestService
 from frontier_radar.services.llm import LLMConfigurationService
@@ -38,11 +41,13 @@ interest_app = typer.Typer(help="Manage the default local interest profile.")
 topic_app = typer.Typer(help="Manage weighted interest topics.")
 keyword_app = typer.Typer(help="Manage weighted interest keywords.")
 llm_app = typer.Typer(help="Configure the local curation model.")
+feedback_app = typer.Typer(help="Record article feedback for the default profile.")
 app.add_typer(collect_app, name="collect")
 app.add_typer(interest_app, name="interest")
 interest_app.add_typer(topic_app, name="topic")
 interest_app.add_typer(keyword_app, name="keyword")
 app.add_typer(llm_app, name="llm")
+app.add_typer(feedback_app, name="feedback")
 
 
 @app.callback()
@@ -122,6 +127,18 @@ def get_ranking_service() -> RankingService:
     )
 
 
+def get_feedback_service() -> FeedbackService:
+    """Assemble feedback writes and deterministic ranking recalculation."""
+    settings = Settings()
+    _, session_factory = create_engine_and_session_factory(settings)
+    profiles = InterestRepository(session_factory)
+    return FeedbackService(
+        profiles,
+        FeedbackRepository(session_factory),
+        RankingService(profiles, RankingRepository(session_factory)),
+    )
+
+
 def get_refresh_service() -> RefreshService:
     """Assemble the existing fixed pipeline for the refresh command."""
     return RefreshService(
@@ -143,6 +160,14 @@ def interest_name_input(name: str) -> InterestNameInput:
     """Validate one CLI term name and convert Pydantic errors into usage errors."""
     try:
         return InterestNameInput(name=name)
+    except ValidationError as error:
+        raise typer.BadParameter(error.errors()[0]["msg"]) from error
+
+
+def feedback_input(article_id: int, decision: FeedbackDecision) -> FeedbackInput:
+    """Validate an article feedback CLI argument before it reaches the service."""
+    try:
+        return FeedbackInput(article_id=article_id, decision=decision)
     except ValidationError as error:
         raise typer.BadParameter(error.errors()[0]["msg"]) from error
 
@@ -187,6 +212,24 @@ def echo_interest_terms(label: str, terms: list[InterestTerm]) -> None:
     typer.echo(f"{label}:")
     for term in terms:
         typer.echo(f"- {term.name} (weight {term.weight})")
+
+
+def feedback_label(decision: FeedbackDecision) -> str:
+    """Return concise past-tense terminal copy for one saved decision."""
+    return "liked" if decision is FeedbackDecision.LIKE else "skipped"
+
+
+def echo_feedback_list(feedback_items) -> None:
+    """Print current profile feedback using its stable service ordering."""
+    if not feedback_items:
+        typer.echo("Feedback: none.")
+        return
+    typer.echo("Feedback:")
+    for feedback in feedback_items:
+        typer.echo(
+            f"- {feedback.article_id} | {feedback_label(feedback.decision)} | "
+            f"{feedback.recorded_at.isoformat()}"
+        )
 
 
 @app.command()
@@ -293,6 +336,37 @@ def rank() -> None:
     )
     for ranking in result.rankings:
         typer.echo(f"{ranking.score} | {ranking.article_id} | {ranking.title}")
+
+
+@feedback_app.command("like")
+def like_article(article_id: int) -> None:
+    """Record that the default profile likes one currently ranked article."""
+    _record_feedback(article_id, FeedbackDecision.LIKE)
+
+
+@feedback_app.command("skip")
+def skip_article(article_id: int) -> None:
+    """Record that the default profile skips one currently ranked article."""
+    _record_feedback(article_id, FeedbackDecision.SKIP)
+
+
+def _record_feedback(article_id: int, decision: FeedbackDecision) -> None:
+    """Delegate one validated feedback command to the service layer."""
+    try:
+        feedback = get_feedback_service().record(feedback_input(article_id, decision))
+    except ValueError as error:
+        typer.echo(f"Feedback failed: {error}")
+        raise typer.Exit(code=1) from error
+    typer.echo(
+        f"Feedback saved: {feedback_label(feedback.decision)} "
+        f"article {feedback.article_id}."
+    )
+
+
+@feedback_app.command("list")
+def list_feedback() -> None:
+    """List current default-profile feedback without changing it."""
+    echo_feedback_list(get_feedback_service().list())
 
 
 @app.command("refresh")

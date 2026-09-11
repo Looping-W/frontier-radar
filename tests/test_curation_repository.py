@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from frontier_radar.db.base import Base
 from frontier_radar.models.collection import (
+    ArticleFeedbackRecord,
     ArticleRankingRecord,
     ArticleRecord,
     CollectionSnapshotRecord,
@@ -100,3 +101,31 @@ def test_repository_returns_raw_item_snapshot_lineage_for_a_candidate(
     ] == [
         (20, 30, "https://example.test/agent-tools"),
     ]
+
+
+def test_repository_excludes_feedback_marked_articles_from_candidates_and_context(
+    session_factory: Callable[[], Session],
+):
+    """Catches repeat curation of an article the default profile already rated."""
+    from frontier_radar.repositories.curation import CurationRepository
+
+    with session_factory() as session:
+        session.add(
+            ArticleFeedbackRecord(
+                profile_id=7,
+                article_id=12,
+                decision="skip",
+                recorded_at=datetime(2026, 9, 11),
+            )
+        )
+        session.commit()
+
+    repository = CurationRepository(session_factory)
+
+    candidates = repository.list_ranked_candidates(profile_id=7, limit=10)
+    context = repository.get_article_context(profile_id=7, article_id=12)
+
+    assert [(candidate.article_id, candidate.score) for candidate in candidates] == [
+        (10, 3)
+    ]
+    assert context is None

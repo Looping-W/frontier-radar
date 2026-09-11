@@ -1,9 +1,10 @@
 from collections.abc import Callable
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
 from frontier_radar.models.collection import (
+    ArticleFeedbackRecord,
     ArticleRankingRecord,
     ArticleRecord,
     CollectionSnapshotRecord,
@@ -42,6 +43,10 @@ class CurationRepository:
                 .where(
                     ArticleRankingRecord.profile_id == profile_id,
                     ArticleRankingRecord.score > 0,
+                    ~exists().where(
+                        ArticleFeedbackRecord.profile_id == profile_id,
+                        ArticleFeedbackRecord.article_id == ArticleRecord.id,
+                    ),
                 )
                 .order_by(ArticleRankingRecord.score.desc(), ArticleRecord.id.asc())
                 .limit(limit)
@@ -72,6 +77,10 @@ class CurationRepository:
                     ArticleRankingRecord.profile_id == profile_id,
                     ArticleRankingRecord.article_id == article_id,
                     ArticleRankingRecord.score > 0,
+                    ~exists().where(
+                        ArticleFeedbackRecord.profile_id == profile_id,
+                        ArticleFeedbackRecord.article_id == ArticleRecord.id,
+                    ),
                 )
             ).one_or_none()
             if candidate is None:

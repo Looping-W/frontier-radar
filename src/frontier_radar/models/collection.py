@@ -91,6 +91,10 @@ class InterestTopicRecord(Base):
             "weight >= 1 AND weight <= 5",
             name="ck_interest_topics_weight_range",
         ),
+        CheckConstraint(
+            "feedback_adjustment >= -2 AND feedback_adjustment <= 2",
+            name="ck_interest_topics_feedback_adjustment_range",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -100,6 +104,7 @@ class InterestTopicRecord(Base):
     name: Mapped[str] = mapped_column(String(512))
     name_key: Mapped[str] = mapped_column(String(512))
     weight: Mapped[int] = mapped_column(Integer)
+    feedback_adjustment: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class InterestKeywordRecord(Base):
@@ -112,6 +117,10 @@ class InterestKeywordRecord(Base):
             "weight >= 1 AND weight <= 5",
             name="ck_interest_keywords_weight_range",
         ),
+        CheckConstraint(
+            "feedback_adjustment >= -2 AND feedback_adjustment <= 2",
+            name="ck_interest_keywords_feedback_adjustment_range",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -121,6 +130,7 @@ class InterestKeywordRecord(Base):
     name: Mapped[str] = mapped_column(String(512))
     name_key: Mapped[str] = mapped_column(String(512))
     weight: Mapped[int] = mapped_column(Integer)
+    feedback_adjustment: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class ArticleRankingRecord(Base):
@@ -135,6 +145,27 @@ class ArticleRankingRecord(Base):
     )
     article_id: Mapped[int] = mapped_column(ForeignKey("articles.id"), index=True)
     score: Mapped[int] = mapped_column(Integer)
+
+
+class ArticleFeedbackRecord(Base):
+    """One current like or skip decision for a profile-owned ranked article."""
+
+    __tablename__ = "article_feedback"
+    __table_args__ = (
+        UniqueConstraint("profile_id", "article_id"),
+        CheckConstraint(
+            "decision IN ('like', 'skip')",
+            name="ck_article_feedback_decision",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    profile_id: Mapped[int] = mapped_column(
+        ForeignKey("interest_profiles.id"), index=True
+    )
+    article_id: Mapped[int] = mapped_column(ForeignKey("articles.id"), index=True)
+    decision: Mapped[str] = mapped_column(String(16))
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class LLMConfigurationRecord(Base):

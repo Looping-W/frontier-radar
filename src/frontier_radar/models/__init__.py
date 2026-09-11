@@ -1,4 +1,5 @@
 from frontier_radar.models.collection import (
+    ArticleFeedbackRecord,
     ArticleRankingRecord,
     ArticleRecord,
     CollectionSnapshotRecord,
@@ -10,6 +11,7 @@ from frontier_radar.models.collection import (
 )
 
 __all__ = [
+    "ArticleFeedbackRecord",
     "ArticleRecord",
     "ArticleRankingRecord",
     "CollectionSnapshotRecord",
