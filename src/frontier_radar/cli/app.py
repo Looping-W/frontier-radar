@@ -17,7 +17,11 @@ from frontier_radar.repositories.interests import InterestRepository
 from frontier_radar.repositories.llm import LLMConfigurationRepository
 from frontier_radar.repositories.normalization import NormalizationRepository
 from frontier_radar.repositories.ranking import RankingRepository
-from frontier_radar.schemas.feedback import FeedbackDecision, FeedbackInput
+from frontier_radar.schemas.feedback import (
+    ArticleFeedback,
+    FeedbackDecision,
+    FeedbackInput,
+)
 from frontier_radar.schemas.interests import (
     InterestNameInput,
     InterestTerm,
@@ -219,7 +223,7 @@ def feedback_label(decision: FeedbackDecision) -> str:
     return "liked" if decision is FeedbackDecision.LIKE else "disliked"
 
 
-def echo_feedback_list(feedback_items) -> None:
+def echo_feedback_list(feedback_items: list[ArticleFeedback]) -> None:
     """Print current profile feedback using its stable service ordering."""
     if not feedback_items:
         typer.echo("Feedback: none.")
@@ -227,7 +231,8 @@ def echo_feedback_list(feedback_items) -> None:
     typer.echo("Feedback:")
     for feedback in feedback_items:
         typer.echo(
-            f"- {feedback.article_id} | {feedback_label(feedback.decision)} | "
+            f"- {feedback.article_id} | {feedback.title} | "
+            f"{feedback_label(feedback.decision)} | "
             f"{feedback.recorded_at.isoformat()}"
         )
 
@@ -367,6 +372,27 @@ def _record_feedback(article_id: int, decision: FeedbackDecision) -> None:
 def list_feedback() -> None:
     """List current default-profile feedback without changing it."""
     echo_feedback_list(get_feedback_service().list())
+
+
+@feedback_app.command("undo")
+def undo_feedback(article_id: int) -> None:
+    """Remove one saved feedback choice for the default profile."""
+    try:
+        feedback = get_feedback_service().undo(article_id)
+    except ValueError as error:
+        typer.echo(f"Feedback failed: {error}")
+        raise typer.Exit(code=1) from error
+    typer.echo(f"Feedback removed: article {feedback.article_id} is neutral.")
+
+
+@feedback_app.command("reset")
+def reset_feedback() -> None:
+    """Clear all saved feedback after an explicit terminal confirmation."""
+    if not typer.confirm("Delete all feedback? This cannot be undone."):
+        typer.echo("Feedback reset cancelled.")
+        return
+    removed_count = get_feedback_service().reset()
+    typer.echo(f"Feedback reset: {removed_count} feedback items removed.")
 
 
 @app.command("refresh")

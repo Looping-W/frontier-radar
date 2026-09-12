@@ -50,6 +50,7 @@ def test_service_records_eligible_feedback_then_recalculates_rankings():
             self.saved = (profile_id, feedback, recorded_at)
             return ArticleFeedback(
                 article_id=feedback.article_id,
+                title="AI agent guide",
                 decision=feedback.decision,
                 recorded_at=recorded_at,
             )
@@ -116,3 +117,82 @@ def test_service_rejects_an_article_without_a_positive_ranking():
 
     with pytest.raises(ValueError, match="positive-ranked"):
         service.record(FeedbackInput(article_id=99, decision="skip"))
+
+
+def test_service_undo_removes_one_feedback_then_recalculates_rankings():
+    """Catches undo that deletes a choice but leaves learned adjustments active."""
+    FeedbackService = _feedback_service()
+
+    class FakeProfileRepository:
+        def get_default_profile(self) -> DefaultProfile:
+            return DefaultProfile(id=7)
+
+    class FakeFeedbackRepository:
+        def __init__(self) -> None:
+            self.removed: tuple[int, int] | None = None
+
+        def delete_feedback(self, profile_id: int, article_id: int) -> ArticleFeedback:
+            self.removed = (profile_id, article_id)
+            return ArticleFeedback(
+                article_id=article_id,
+                title="AI agent guide",
+                decision="like",
+                recorded_at=datetime(2026, 9, 12, tzinfo=UTC),
+            )
+
+    class FakeRankingService:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def rank_default_profile(self) -> RankingResult:
+            self.calls += 1
+            return RankingResult(articles_scored=1, rankings=[])
+
+    feedback_repository = FakeFeedbackRepository()
+    ranking_service = FakeRankingService()
+    service = FeedbackService(
+        FakeProfileRepository(), feedback_repository, ranking_service
+    )
+
+    removed = service.undo(12)
+
+    assert removed.article_id == 12
+    assert feedback_repository.removed == (7, 12)
+    assert ranking_service.calls == 1
+
+
+def test_service_reset_removes_all_feedback_then_recalculates_rankings():
+    """Catches reset that removes records but leaves their learned effects active."""
+    FeedbackService = _feedback_service()
+
+    class FakeProfileRepository:
+        def get_default_profile(self) -> DefaultProfile:
+            return DefaultProfile(id=7)
+
+    class FakeFeedbackRepository:
+        def __init__(self) -> None:
+            self.profile_id: int | None = None
+
+        def delete_all_feedback(self, profile_id: int) -> int:
+            self.profile_id = profile_id
+            return 2
+
+    class FakeRankingService:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def rank_default_profile(self) -> RankingResult:
+            self.calls += 1
+            return RankingResult(articles_scored=1, rankings=[])
+
+    feedback_repository = FakeFeedbackRepository()
+    ranking_service = FakeRankingService()
+    service = FeedbackService(
+        FakeProfileRepository(), feedback_repository, ranking_service
+    )
+
+    removed_count = service.reset()
+
+    assert removed_count == 2
+    assert feedback_repository.profile_id == 7
+    assert ranking_service.calls == 1

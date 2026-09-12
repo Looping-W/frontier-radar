@@ -143,7 +143,90 @@ def test_repository_lists_feedback_in_article_id_order(
         1, FeedbackInput(article_id=1, decision="like"), timestamp
     )
 
-    assert [feedback.article_id for feedback in repository.list_feedback(1)] == [1, 2]
+    feedback_items = repository.list_feedback(1)
+
+    assert [feedback.article_id for feedback in feedback_items] == [1, 2]
+    assert [feedback.title for feedback in feedback_items] == [
+        "AI agent guide",
+        "Tool calling guide",
+    ]
+
+
+def test_repository_removes_current_feedback_without_changing_source_lineage(
+    session_factory: Callable[[], Session],
+):
+    """Catches undo that leaves feedback active or deletes article provenance."""
+    repository = _repository(session_factory)
+    repository.upsert_feedback(
+        1,
+        FeedbackInput(article_id=1, decision="like"),
+        datetime(2026, 9, 11, tzinfo=UTC),
+    )
+
+    removed = repository.delete_feedback(1, 1)
+
+    assert removed is not None
+    assert removed.article_id == 1
+    assert removed.title == "AI agent guide"
+    assert repository.list_feedback(1) == []
+    with session_factory() as session:
+        raw_item = session.scalar(select(RawItemRecord).where(RawItemRecord.id == 1))
+        snapshot = session.scalar(
+            select(CollectionSnapshotRecord).where(CollectionSnapshotRecord.id == 1)
+        )
+    assert raw_item.article_id == 1
+    assert snapshot.raw_body == "{}"
+
+
+def test_repository_removes_all_feedback_without_changing_source_lineage(
+    session_factory: Callable[[], Session],
+):
+    """Catches reset that removes provenance instead of only current feedback."""
+    repository = _repository(session_factory)
+    timestamp = datetime(2026, 9, 11, tzinfo=UTC)
+    repository.upsert_feedback(
+        1, FeedbackInput(article_id=1, decision="like"), timestamp
+    )
+    repository.upsert_feedback(
+        1, FeedbackInput(article_id=2, decision="skip"), timestamp
+    )
+
+    removed_count = repository.delete_all_feedback(1)
+
+    assert removed_count == 2
+    assert repository.list_feedback(1) == []
+    with session_factory() as session:
+        article = session.scalar(select(ArticleRecord).where(ArticleRecord.id == 1))
+        raw_item = session.scalar(select(RawItemRecord).where(RawItemRecord.id == 1))
+        snapshot = session.scalar(
+            select(CollectionSnapshotRecord).where(CollectionSnapshotRecord.id == 1)
+        )
+    assert article.title == "AI agent guide"
+    assert raw_item.article_id == 1
+    assert snapshot.raw_body == "{}"
+
+
+def test_repository_reset_keeps_feedback_for_other_profiles(
+    session_factory: Callable[[], Session],
+):
+    """Catches reset that clears feedback belonging to another profile."""
+    repository = _repository(session_factory)
+    timestamp = datetime(2026, 9, 11, tzinfo=UTC)
+    with session_factory() as session:
+        session.add(InterestProfileRecord(id=2, name="Other", slug="other"))
+        session.commit()
+    repository.upsert_feedback(
+        1, FeedbackInput(article_id=1, decision="like"), timestamp
+    )
+    repository.upsert_feedback(
+        2, FeedbackInput(article_id=2, decision="skip"), timestamp
+    )
+
+    removed_count = repository.delete_all_feedback(1)
+
+    assert removed_count == 1
+    assert repository.list_feedback(1) == []
+    assert [feedback.article_id for feedback in repository.list_feedback(2)] == [2]
 
 
 def test_repository_recognizes_only_current_positive_profile_rankings(

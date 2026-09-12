@@ -31,6 +31,14 @@ class FeedbackPersistence(Protocol):
 
     def list_feedback(self, profile_id: int) -> list[ArticleFeedback]: ...
 
+    def delete_feedback(
+        self,
+        profile_id: int,
+        article_id: int,
+    ) -> ArticleFeedback | None: ...
+
+    def delete_all_feedback(self, profile_id: int) -> int: ...
+
 
 class RankingRefresh(Protocol):
     """The deterministic recalculation triggered after an accepted feedback write."""
@@ -72,3 +80,19 @@ class FeedbackService:
         """List the current default-profile feedback in stable repository order."""
         profile = self._profile_repository.get_default_profile()
         return self._feedback_repository.list_feedback(profile.id)
+
+    def undo(self, article_id: int) -> ArticleFeedback:
+        """Remove one saved choice and rebuild the learned ranking adjustments."""
+        profile = self._profile_repository.get_default_profile()
+        removed = self._feedback_repository.delete_feedback(profile.id, article_id)
+        if removed is None:
+            raise ValueError(f"Feedback not found for article {article_id}")
+        self._ranking_service.rank_default_profile()
+        return removed
+
+    def reset(self) -> int:
+        """Clear all current feedback and rebuild the learned ranking adjustments."""
+        profile = self._profile_repository.get_default_profile()
+        removed_count = self._feedback_repository.delete_all_feedback(profile.id)
+        self._ranking_service.rank_default_profile()
+        return removed_count
