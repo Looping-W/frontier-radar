@@ -200,3 +200,29 @@ def test_service_derives_bounded_feedback_adjustments_and_hides_seen_articles():
         RankedArticle(article_id=11, title="Tool calling deployment guide", score=2),
     ]
     assert result.rankings == repository.persisted_rankings
+
+
+def test_service_lists_stored_default_profile_rankings_without_recalculation():
+    """Catches a recommendation read that uses the wrong profile or reranks."""
+    from frontier_radar.schemas.ranking import RankedArticle
+    from frontier_radar.services.ranking import RankingService
+
+    expected = [RankedArticle(article_id=12, title="AI Agent guide", score=5)]
+
+    class FakeProfileRepository:
+        def get_default_profile(self) -> DefaultProfile:
+            return DefaultProfile(id=7)
+
+    class FakeRankingRepository:
+        def __init__(self) -> None:
+            self.request: tuple[int, int] | None = None
+
+        def list_rankings(self, profile_id: int, limit: int) -> list[RankedArticle]:
+            self.request = (profile_id, limit)
+            return expected
+
+    repository = FakeRankingRepository()
+    service = RankingService(FakeProfileRepository(), repository)
+
+    assert service.list_default_profile(5) == expected
+    assert repository.request == (7, 5)

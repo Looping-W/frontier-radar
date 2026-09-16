@@ -1,7 +1,7 @@
 from collections import defaultdict
 from collections.abc import Callable
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from frontier_radar.models.collection import (
@@ -116,6 +116,47 @@ class RankingRepository:
                     decision=row.decision,
                 )
                 for row in feedback_rows
+            ]
+
+    def list_rankings(self, profile_id: int, limit: int) -> list[RankedArticle]:
+        """Return current unseen positive rankings without recalculating them."""
+        with self._session_factory() as session:
+            rows = session.execute(
+                select(
+                    ArticleRankingRecord.article_id,
+                    ArticleRecord.title,
+                    ArticleRankingRecord.score,
+                )
+                .join(
+                    ArticleRecord,
+                    ArticleRecord.id == ArticleRankingRecord.article_id,
+                )
+                .outerjoin(
+                    ArticleFeedbackRecord,
+                    and_(
+                        ArticleFeedbackRecord.profile_id == profile_id,
+                        ArticleFeedbackRecord.article_id
+                        == ArticleRankingRecord.article_id,
+                    ),
+                )
+                .where(
+                    ArticleRankingRecord.profile_id == profile_id,
+                    ArticleRankingRecord.score > 0,
+                    ArticleFeedbackRecord.id.is_(None),
+                )
+                .order_by(
+                    ArticleRankingRecord.score.desc(),
+                    ArticleRankingRecord.article_id,
+                )
+                .limit(limit)
+            ).all()
+            return [
+                RankedArticle(
+                    article_id=row.article_id,
+                    title=row.title,
+                    score=row.score,
+                )
+                for row in rows
             ]
 
     def replace_feedback_adjustments(

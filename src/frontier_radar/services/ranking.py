@@ -34,6 +34,8 @@ class RankingPersistence(Protocol):
         self, profile_id: int
     ) -> list[FeedbackRankableArticle]: ...
 
+    def list_rankings(self, profile_id: int, limit: int) -> list[RankedArticle]: ...
+
     def replace_feedback_adjustments(
         self,
         profile_id: int,
@@ -104,6 +106,11 @@ class RankingService:
                 if ranking.score > 0 and ranking.article_id not in seen_article_ids
             ],
         )
+
+    def list_default_profile(self, limit: int = 20) -> list[RankedArticle]:
+        """Read current stored recommendations without recalculating rankings."""
+        profile = self._profile_repository.get_default_profile()
+        return self._ranking_repository.list_rankings(profile.id, limit)
 
     @staticmethod
     def _derive_adjustments(

@@ -38,8 +38,14 @@ from frontier_radar.services.migrations import MigrationService
 from frontier_radar.services.normalization import NormalizationService
 from frontier_radar.services.ranking import RankingService
 from frontier_radar.services.refresh import RefreshService
+from frontier_radar.services.tui import TUICommandService
+from frontier_radar.tui.app import run_tui
 
-app = typer.Typer(help="Frontier Radar technology intelligence CLI.")
+app = typer.Typer(
+    help="Frontier Radar technology intelligence CLI.",
+    invoke_without_command=True,
+    no_args_is_help=False,
+)
 collect_app = typer.Typer(help="Collect public technology updates.")
 interest_app = typer.Typer(help="Manage the default local interest profile.")
 topic_app = typer.Typer(help="Manage weighted interest topics.")
@@ -55,8 +61,10 @@ app.add_typer(feedback_app, name="feedback")
 
 
 @app.callback()
-def main() -> None:
+def main(ctx: typer.Context) -> None:
     """Frontier Radar command group."""
+    if ctx.invoked_subcommand is None:
+        run_tui(get_tui_command_service())
 
 
 def get_health_service() -> HealthService:
@@ -149,6 +157,21 @@ def get_refresh_service() -> RefreshService:
         get_collection_service(),
         get_normalization_service(),
         get_ranking_service(),
+    )
+
+
+def get_tui_command_service() -> TUICommandService:
+    """Assemble the allowlisted TUI command boundary from existing services."""
+    return TUICommandService(
+        health_service=get_health_service(),
+        collection_service=get_collection_service(),
+        normalization_service=get_normalization_service(),
+        ranking_service=get_ranking_service(),
+        curation_service=get_curation_service(),
+        interest_service=get_interest_service(),
+        feedback_service=get_feedback_service(),
+        llm_service=get_llm_configuration_service(),
+        refresh_service=get_refresh_service(),
     )
 
 

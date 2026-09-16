@@ -207,3 +207,51 @@ def test_repository_reads_feedback_articles_and_replaces_only_adjustments(
     assert (topic.weight, topic.feedback_adjustment) == (3, 2)
     assert (keyword.weight, keyword.feedback_adjustment) == (2, -2)
     assert raw_item.article_id == 1
+
+
+def test_repository_lists_only_unseen_positive_rankings_without_writes(
+    session_factory: Callable[[], Session],
+):
+    """Catches a drawer read that includes seen items, zero scores, or writes."""
+    module = importlib.import_module("frontier_radar.repositories.ranking")
+    repository = module.RankingRepository(session_factory)
+    with session_factory() as session:
+        third_article = ArticleRecord(
+            id=3,
+            title="Zero score article",
+            title_key="zero score article",
+            normalized_url="https://example.com/three",
+            published_at=None,
+        )
+        session.add(third_article)
+        session.flush()
+        session.add_all(
+            [
+                ArticleRankingRecord(profile_id=1, article_id=1, score=5),
+                ArticleRankingRecord(profile_id=1, article_id=2, score=3),
+                ArticleRankingRecord(profile_id=1, article_id=3, score=0),
+                ArticleFeedbackRecord(
+                    profile_id=1,
+                    article_id=1,
+                    decision="like",
+                    recorded_at=datetime(2026, 9, 13, tzinfo=UTC),
+                ),
+            ]
+        )
+        session.commit()
+        counts_before = (
+            session.scalar(select(func.count()).select_from(ArticleRankingRecord)),
+            session.scalar(select(func.count()).select_from(ArticleFeedbackRecord)),
+        )
+
+    result = repository.list_rankings(1, 20)
+
+    assert result == [
+        RankedArticle(article_id=2, title="AI Agent overview", score=3)
+    ]
+    with session_factory() as session:
+        counts_after = (
+            session.scalar(select(func.count()).select_from(ArticleRankingRecord)),
+            session.scalar(select(func.count()).select_from(ArticleFeedbackRecord)),
+        )
+    assert counts_after == counts_before

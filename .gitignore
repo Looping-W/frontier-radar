@@ -8,6 +8,7 @@ docs/
 .agents/
 skills/
 .worktrees/
+.superpowers/
 
 # Python environments, caches, and build artifacts
 .venv/
