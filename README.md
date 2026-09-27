@@ -25,13 +25,18 @@ python -m venv .venv
 ```powershell
 .\.venv\Scripts\fradar.exe health
 .\.venv\Scripts\fradar.exe refresh
-.\.venv\Scripts\fradar.exe digest --limit 5
+.\.venv\Scripts\fradar.exe digest --limit 5 --lang zh
 ```
 
 ## TUI
 
-TUI 只接受明确的斜杠命令。输入 `/help` 查看完整清单，`Ctrl+P` 打开命令面板，`Ctrl+B`
-展开推荐、当前会话日报、反馈和执行记录抽屉，`Ctrl+L` 回到输入框。
+TUI 默认使用中文阅读文案，并只接受明确的英文斜杠命令。输入 `/lang en` 可切换为英文，输入
+`/lang zh` 切回中文；语言只在当前会话有效。`/digest` 会按当前界面语言直接生成对应语言的策展
+概览与推荐理由，来源文章标题、URL、模型名和 ID 等技术信息保持原样。
+
+输入 `/help` 查看完整清单，`Ctrl+P` 打开命令面板，`Ctrl+B` 展开推荐、当前会话日报、反馈和
+执行记录抽屉，`Ctrl+L` 回到输入框。抽屉正文支持鼠标滚轮、方向键、PageUp/PageDown 和
+Home/End，数据库与模型状态固定在底部。
 
 Phase 6 不把普通自然语言解释为动作，不执行模型生成的 Shell/SQL/Python/CLI 字符串，也不保存
 会话或日报历史。`/feedback reset` 必须在界面内再次确认。命令由 TUI 直接调用 service 层；

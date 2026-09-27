@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from frontier_radar.schemas.collection import CollectionResult, CollectionSnapshot
+from frontier_radar.schemas.curation import CurationLanguage
 from frontier_radar.schemas.feedback import ArticleFeedback, FeedbackDecision
 from frontier_radar.schemas.health import HealthStatus
 from frontier_radar.schemas.interests import InterestTerm
@@ -11,7 +12,7 @@ from frontier_radar.schemas.llm import LLMConfiguration
 from frontier_radar.schemas.normalization import NormalizationResult
 from frontier_radar.schemas.ranking import RankedArticle, RankingResult
 from frontier_radar.schemas.refresh import RefreshResult
-from frontier_radar.schemas.tui import TUIAction, TUIDrawerView
+from frontier_radar.schemas.tui import TUIAction, TUIDrawerView, TUILocale
 from frontier_radar.services.tui import TUICommandService, TUIInputError
 
 
@@ -77,6 +78,8 @@ from frontier_radar.services.tui import TUICommandService, TUIInputError
         ("/like 12", TUIAction.LIKE, {"article_id": 12}, False),
         ("/dislike 12", TUIAction.DISLIKE, {"article_id": 12}, False),
         ("/undo 12", TUIAction.UNDO, {"article_id": 12}, False),
+        ("/lang zh", TUIAction.SET_LANGUAGE, {"language": "zh"}, False),
+        ("/lang en", TUIAction.SET_LANGUAGE, {"language": "en"}, False),
         ("/quit", TUIAction.QUIT, {}, False),
     ],
 )
@@ -116,6 +119,9 @@ def test_parse_accepts_only_documented_command_shapes(
         "/like 0",
         "/dislike -1",
         "/undo article",
+        "/lang",
+        "/lang fr",
+        "/lang zh extra",
     ],
 )
 def test_parse_rejects_natural_language_unknown_commands_and_invalid_arguments(
@@ -219,8 +225,8 @@ class FakeServices:
         def __init__(self, owner):
             self.owner = owner
 
-        def create_digest(self, limit):
-            self.owner.calls.append(("digest", limit))
+        def create_digest(self, limit, language=CurationLanguage.EN):
+            self.owner.calls.append(("digest", limit, language))
             return SimpleNamespace(markdown="# Daily brief\n\nA local digest.\n")
 
     class Interests:
@@ -334,7 +340,12 @@ def _command_service(services: FakeServices) -> TUICommandService:
         ),
         ("/normalize", ("normalize",), "Normalization complete", None),
         ("/rank", ("rank",), "Ranking complete", TUIDrawerView.RECOMMENDATIONS),
-        ("/digest 5", ("digest", 5), "Daily brief", TUIDrawerView.DIGEST),
+        (
+            "/digest 5",
+            ("digest", 5, CurationLanguage.EN),
+            "Daily brief",
+            TUIDrawerView.DIGEST,
+        ),
         ("/topics", ("list_topics",), "Topics", None),
         ("/keywords", ("list_keywords",), "Keywords", None),
         (
@@ -450,6 +461,116 @@ def test_execute_reports_refresh_stages_and_help_and_quit_locally():
     assert "1 relevant article" in refresh_result.body
     assert quit_result.should_quit is True
     assert quit_result.title == "Exit Frontier Radar"
+
+
+def test_execute_localizes_static_copy_without_translating_identifiers():
+    """Catches Chinese mode leaving core results English or altering identifiers."""
+    services = FakeServices()
+    command_service = _command_service(services)
+
+    health = command_service.execute(
+        TUICommandService.parse("/health", locale=TUILocale.ZH),
+        locale=TUILocale.ZH,
+    )
+    model = command_service.execute(
+        TUICommandService.parse("/model", locale=TUILocale.ZH),
+        locale=TUILocale.ZH,
+    )
+    help_result = command_service.execute(
+        TUICommandService.parse("/help", locale=TUILocale.ZH),
+        locale=TUILocale.ZH,
+    )
+
+    assert health.title == "系统状态"
+    assert health.body == "应用：ok\n数据库：ok"
+    assert model.title == "模型配置"
+    assert "提供方：Local model" in model.body
+    assert "协议：openai-compatible" in model.body
+    assert "Endpoint：https://example.com/v1" in model.body
+    assert "模型：example-chat" in model.body
+    assert "采集" in help_result.body
+    assert "/collect arxiv QUERY" in help_result.body
+
+
+def test_digest_uses_the_current_interface_language_for_model_output():
+    """Catches a Chinese TUI asking the curation model for an English brief."""
+    services = FakeServices()
+    command_service = _command_service(services)
+
+    result = command_service.execute(
+        TUICommandService.parse("/digest 5", locale=TUILocale.ZH),
+        locale=TUILocale.ZH,
+    )
+
+    assert result.title == "今日简报"
+    assert ("digest", 5, CurationLanguage.ZH) in services.calls
+
+
+def test_language_command_is_local_and_uses_the_target_language():
+    """Catches a session-only language change invoking business dependencies."""
+    services = FakeServices()
+    command_service = _command_service(services)
+
+    command = TUICommandService.parse("/lang zh")
+    result = command_service.execute(command, locale=TUILocale.ZH)
+
+    assert result.title == "界面语言"
+    assert result.body == "已切换为中文。"
+    assert services.calls == []
+
+
+def test_parse_reports_usage_errors_in_the_selected_language():
+    """Catches localized UI errors falling back to an unrelated language."""
+    with pytest.raises(TUIInputError, match="请使用 /lang zh 或 /lang en"):
+        TUICommandService.parse("/lang fr", locale=TUILocale.ZH)
+
+
+@pytest.mark.parametrize(
+    ("raw", "message"),
+    [
+        ("/digest many", "请使用 /digest 或 /digest LIMIT"),
+        ("/topic add two AI Agent", "请使用 /topic add、update 或 remove"),
+        ("/like article", "请使用 /like ARTICLE_ID"),
+    ],
+)
+def test_parse_localizes_validation_errors(raw: str, message: str):
+    """Catches raw English validation traces leaking into Chinese UI copy."""
+    with pytest.raises(TUIInputError, match=message):
+        TUICommandService.parse(raw, locale=TUILocale.ZH)
+
+
+@pytest.mark.parametrize(
+    ("raw", "title", "body_fragment", "confirmed"),
+    [
+        ("/collect hn", "采集完成", "Hacker News：已采集 1 条", False),
+        ("/normalize", "清洗完成", "已处理 3 个快照", False),
+        ("/rank", "排序完成", "2 篇文章已评分", False),
+        ("/topics", "主题", "权重 4", False),
+        ("/topic add 4 AI Agent", "主题已保存", "AI Agent · 权重 4", False),
+        ("/feedback", "反馈记录", "喜欢", False),
+        ("/like 12", "反馈已保存", "文章 #12 已标记为喜欢", False),
+        ("/undo 12", "反馈已撤销", "文章 #12 已恢复为中性", False),
+        ("/feedback reset", "反馈已重置", "已移除 1 条反馈", True),
+    ],
+)
+def test_execute_localizes_each_service_result_family(
+    raw: str,
+    title: str,
+    body_fragment: str,
+    confirmed: bool,
+):
+    """Catches a command family being omitted from the Chinese catalog."""
+    services = FakeServices()
+    command_service = _command_service(services)
+
+    result = command_service.execute(
+        TUICommandService.parse(raw, locale=TUILocale.ZH),
+        confirmed=confirmed,
+        locale=TUILocale.ZH,
+    )
+
+    assert result.title == title
+    assert body_fragment in result.body
 
 
 def test_execute_refuses_feedback_reset_until_explicitly_confirmed():

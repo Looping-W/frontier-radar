@@ -172,3 +172,54 @@ def test_agent_requests_a_schema_correction_after_a_missing_rationale():
     assert client.correction_messages[-2].role == "assistant"
     assert client.correction_messages[-1].role == "user"
     assert "rationale" in client.correction_messages[-1].content
+
+
+def test_agent_retries_once_when_chinese_digest_content_is_english():
+    """Catches a requested Chinese brief silently accepting English prose."""
+    from frontier_radar.agents.contracts import ModelReply, ToolCall
+    from frontier_radar.agents.curation_agent import CurationAgent
+    from frontier_radar.schemas.curation import CurationLanguage
+
+    transcript = json.loads(
+        (
+            Path(__file__).parent
+            / "fixtures"
+            / "curation_agent_zh_transcript.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    class Client:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.messages = None
+
+        def complete(self, messages, tools):
+            self.messages = messages
+            reply = transcript[self.calls]
+            self.calls += 1
+            return ModelReply(
+                content=reply.get("content"),
+                tool_calls=[
+                    ToolCall(**tool_call)
+                    for tool_call in reply.get("tool_calls", [])
+                ],
+            )
+
+    class Tools:
+        def definitions(self):
+            return []
+
+        def execute(self, name, arguments_json):
+            return '[{"article_id":12,"title":"Agent tools","score":5}]'
+
+    client = Client()
+    draft = CurationAgent(
+        client,
+        Tools(),
+        language=CurationLanguage.ZH,
+    ).run()
+
+    assert draft.overview.startswith("今天保存的技术动态")
+    assert client.calls == 3
+    assert "Simplified Chinese" in client.messages[0].content
+    assert "Simplified Chinese" in client.messages[-1].content

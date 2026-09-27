@@ -3,7 +3,11 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Protocol
 
-from frontier_radar.schemas.curation import CurationArticleContext, CurationDraft
+from frontier_radar.schemas.curation import (
+    CurationArticleContext,
+    CurationDraft,
+    CurationLanguage,
+)
 from frontier_radar.schemas.llm import LLMConfiguration
 
 
@@ -50,7 +54,10 @@ class CurationService:
         profile_repository: ProfileLookup,
         curation_repository: CurationLookup,
         api_key: str | None,
-        agent_factory: Callable[[LLMConfiguration, str, int], CurationAgentRun],
+        agent_factory: Callable[
+            [LLMConfiguration, str, int, CurationLanguage],
+            CurationAgentRun,
+        ],
     ) -> None:
         self._configuration_service = configuration_service
         self._profile_repository = profile_repository
@@ -62,6 +69,7 @@ class CurationService:
         self,
         limit: int,
         today: date | None = None,
+        language: CurationLanguage = CurationLanguage.EN,
     ) -> CurationResult:
         """Validate configuration, curate local data, then render safe Markdown."""
         configuration = self._configuration_service.show()
@@ -71,7 +79,12 @@ class CurationService:
             )
         if not self._api_key:
             raise CurationError("LLM_API_KEY is not configured")
-        draft = self._agent_factory(configuration, self._api_key, limit).run()
+        draft = self._agent_factory(
+            configuration,
+            self._api_key,
+            limit,
+            language,
+        ).run()
         profile = self._profile_repository.get_default_profile()
         contexts = []
         for article in draft.articles:
@@ -88,6 +101,7 @@ class CurationService:
                 draft,
                 contexts,
                 today or datetime.now(UTC).date(),
+                language,
             ),
         )
 
@@ -96,13 +110,22 @@ class CurationService:
         draft: CurationDraft,
         contexts: list[CurationArticleContext],
         today: date,
+        language: CurationLanguage,
     ) -> str:
-        sections = [
-            f"# Frontier Radar Daily Brief — {today.isoformat()}",
-            "## Overview",
-            draft.overview,
-            "## Selected articles",
-        ]
+        if language is CurationLanguage.ZH:
+            sections = [
+                f"# Frontier Radar 今日简报 — {today.isoformat()}",
+                "## 今日概览",
+                draft.overview,
+                "## 推荐文章",
+            ]
+        else:
+            sections = [
+                f"# Frontier Radar Daily Brief — {today.isoformat()}",
+                "## Overview",
+                draft.overview,
+                "## Selected articles",
+            ]
         for index, (selection, context) in enumerate(
             zip(draft.articles, contexts, strict=True),
             start=1,
@@ -113,18 +136,35 @@ class CurationService:
                 if source is not None and source.url
                 else f"### {index}. {context.title}"
             )
-            sections.extend(
-                [
-                    heading,
-                    f"Relevance score: {context.score}",
-                    selection.summary,
-                    f"Why it matters: {selection.rationale}",
-                ]
-            )
-            if source is not None:
-                sections.append(
-                    "Traceability: "
-                    f"{source.source}; raw item {source.raw_item_id}; "
-                    f"snapshot {source.snapshot_id}."
+            if language is CurationLanguage.ZH:
+                sections.extend(
+                    [
+                        heading,
+                        f"相关度：{context.score}",
+                        f"策展概述：{selection.summary}",
+                        f"推荐理由：{selection.rationale}",
+                    ]
                 )
+            else:
+                sections.extend(
+                    [
+                        heading,
+                        f"Relevance score: {context.score}",
+                        selection.summary,
+                        f"Why it matters: {selection.rationale}",
+                    ]
+                )
+            if source is not None:
+                if language is CurationLanguage.ZH:
+                    sections.append(
+                        "追溯信息："
+                        f"{source.source}；原始条目 {source.raw_item_id}；"
+                        f"快照 {source.snapshot_id}。"
+                    )
+                else:
+                    sections.append(
+                        "Traceability: "
+                        f"{source.source}; raw item {source.raw_item_id}; "
+                        f"snapshot {source.snapshot_id}."
+                    )
         return "\n\n".join(sections) + "\n"

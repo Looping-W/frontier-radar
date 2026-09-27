@@ -15,25 +15,44 @@ from frontier_radar.schemas.tui import (
     TUICommandResult,
     TUIDashboard,
     TUIDrawerView,
+    TUILocale,
 )
 from frontier_radar.services.tui import TUICommandService, TUIInputError
+from frontier_radar.services.tui_text import (
+    TUITextKey,
+    tui_command_options,
+    tui_text,
+)
 
 
 class ConfirmFeedbackReset(ModalScreen[bool]):
     """Require an explicit in-app decision before clearing all feedback."""
 
+    def __init__(self, locale: TUILocale) -> None:
+        super().__init__()
+        self._locale = locale
+
     def compose(self) -> ComposeResult:
         with Center():
             with Vertical(id="confirm-card"):
-                yield Static("RESET FEEDBACK", id="confirm-title")
                 yield Static(
-                    "Clear all feedback for the default profile?\n"
-                    "Articles, snapshots, and manual interest weights stay intact.",
+                    tui_text(self._locale, TUITextKey.RESET_TITLE),
+                    id="confirm-title",
+                )
+                yield Static(
+                    tui_text(self._locale, TUITextKey.RESET_COPY),
                     id="confirm-copy",
                 )
                 with Horizontal(id="confirm-actions"):
-                    yield Button("Cancel", id="cancel-reset")
-                    yield Button("Reset feedback", id="confirm-reset", variant="error")
+                    yield Button(
+                        tui_text(self._locale, TUITextKey.CANCEL),
+                        id="cancel-reset",
+                    )
+                    yield Button(
+                        tui_text(self._locale, TUITextKey.RESET_ACTION),
+                        id="confirm-reset",
+                        variant="error",
+                    )
 
     @on(Button.Pressed)
     def handle_choice(self, event: Button.Pressed) -> None:
@@ -61,7 +80,9 @@ class FrontierRadarApp(App[None]):
         self._command_service = command_service
         self._dashboard = TUIDashboard(database_status="checking")
         self._drawer_view = TUIDrawerView.EXECUTION
-        self._execution_log: list[str] = []
+        self._locale = TUILocale.ZH
+        self._execution_log: list[tuple[TUITextKey, str]] = []
+        self._current_command = "/health"
 
     def compose(self) -> ComposeResult:
         yield Horizontal(
@@ -76,57 +97,89 @@ class FrontierRadarApp(App[None]):
         with Horizontal(id="workspace"):
             with Vertical(id="drawer"):
                 yield Static(
-                    "CURRENT SESSION",
+                    tui_text(self._locale, TUITextKey.CURRENT_SESSION),
                     id="drawer-section-current",
                     classes="drawer-section",
                 )
                 with Vertical(id="drawer-nav"):
                     yield Button(
-                        "○  执行记录",
+                        tui_text(self._locale, TUITextKey.EXECUTION),
                         id="view-execution",
                         classes="drawer-tab",
                     )
                     yield Button(
-                        "◇  推荐文章",
+                        tui_text(self._locale, TUITextKey.RECOMMENDATIONS),
                         id="view-recommendations",
                         classes="drawer-tab",
                     )
-                    yield Button("≡  今日简报", id="view-digest", classes="drawer-tab")
                     yield Button(
-                        "♡  反馈记录",
+                        tui_text(self._locale, TUITextKey.DAILY_BRIEF),
+                        id="view-digest",
+                        classes="drawer-tab",
+                    )
+                    yield Button(
+                        tui_text(self._locale, TUITextKey.FEEDBACK_RECORDS),
                         id="view-feedback",
                         classes="drawer-tab",
                     )
-                yield Markdown("No session activity yet.", id="drawer-content")
+                with VerticalScroll(id="drawer-scroll"):
+                    yield Markdown(
+                        tui_text(
+                            self._locale,
+                            TUITextKey.DRAWER_EXECUTION_EMPTY,
+                        ),
+                        id="drawer-content",
+                    )
                 yield Static(
-                    "SYSTEM",
+                    tui_text(self._locale, TUITextKey.SYSTEM),
                     id="drawer-section-system",
                     classes="drawer-section",
                 )
-                yield Static("DATABASE  CHECKING\nMODEL     —", id="drawer-system")
                 yield Static(
-                    "MVP · ALLOWLISTED ONLY\nNO AUTONOMOUS ACTIONS",
+                    tui_text(
+                        self._locale,
+                        TUITextKey.DRAWER_SYSTEM,
+                        database="CHECKING",
+                        model="—",
+                    ),
+                    id="drawer-system",
+                )
+                yield Static(
+                    tui_text(self._locale, TUITextKey.SAFETY_BOUNDARY),
                     id="drawer-boundary",
                 )
             with Vertical(id="main-column"):
                 yield Static("frontier\nradar", id="brand")
                 yield Static(
-                    "Local intelligence, explicit commands.  /help to begin.",
+                    tui_text(self._locale, TUITextKey.WELCOME),
                     id="boundary-copy",
                 )
                 with Vertical(id="session-head"):
-                    yield Static("执行记录", id="view-title")
-                    yield Static("CURRENT PROCESS · /health", id="view-subtitle")
+                    yield Static(
+                        tui_text(self._locale, TUITextKey.EXECUTION),
+                        id="view-title",
+                    )
+                    yield Static(
+                        tui_text(
+                            self._locale,
+                            TUITextKey.CURRENT_PROCESS,
+                            command="/health",
+                        ),
+                        id="view-subtitle",
+                    )
                 yield VerticalScroll(id="timeline")
                 with Vertical(id="composer-shell"):
                     with Horizontal(id="composer-row"):
                         yield Static("›", id="composer-prompt")
                         yield Input(
-                            placeholder="Type an allowlisted command…",
+                            placeholder=tui_text(
+                                self._locale,
+                                TUITextKey.COMPOSER_PLACEHOLDER,
+                            ),
                             id="composer",
                         )
                     yield Static(
-                        "CTRL+P COMMANDS  ·  CTRL+B DATA  ·  ENTER RUN",
+                        tui_text(self._locale, TUITextKey.COMPOSER_META),
                         id="composer-meta",
                     )
 
@@ -140,74 +193,13 @@ class FrontierRadarApp(App[None]):
 
     def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
         yield from super().get_system_commands(screen)
-        commands = [
-            ("Help", "Show the Phase 6 command allowlist", "/help", True),
-            ("Health", "Check application and database status", "/health", True),
-            (
-                "Model configuration",
-                "Show saved non-secret model metadata",
-                "/model",
-                True,
-            ),
-            ("Refresh radar", "Collect, normalize, and rank", "/refresh", True),
-            ("Rank stored articles", "Rebuild deterministic ranking", "/rank", True),
-            ("Create daily brief", "Generate a brief from local data", "/digest", True),
-            (
-                "Collect Hacker News",
-                "Collect the current top-story feed",
-                "/collect hn",
-                True,
-            ),
-            (
-                "Collect all sources",
-                "Run the fixed default source collection",
-                "/collect all",
-                True,
-            ),
-            ("Show topics", "List weighted profile topics", "/topics", True),
-            ("Add topic", "Prefill WEIGHT and NAME", "/topic add ", False),
-            ("Update topic", "Prefill WEIGHT and NAME", "/topic update ", False),
-            ("Remove topic", "Prefill NAME", "/topic remove ", False),
-            ("Show keywords", "List weighted profile keywords", "/keywords", True),
-            ("Add keyword", "Prefill WEIGHT and NAME", "/keyword add ", False),
-            (
-                "Update keyword",
-                "Prefill WEIGHT and NAME",
-                "/keyword update ",
-                False,
-            ),
-            ("Remove keyword", "Prefill NAME", "/keyword remove ", False),
-            ("Show feedback", "List current feedback", "/feedback", True),
-            ("Like article", "Prefill ARTICLE_ID", "/like ", False),
-            ("Dislike article", "Prefill ARTICLE_ID", "/dislike ", False),
-            ("Undo feedback", "Prefill ARTICLE_ID", "/undo ", False),
-            (
-                "Reset feedback",
-                "Clear feedback after explicit confirmation",
-                "/feedback reset",
-                True,
-            ),
-            (
-                "Collect arXiv",
-                "Prefill a temporary arXiv collection query",
-                "/collect arxiv ",
-                False,
-            ),
-            (
-                "Normalize snapshots",
-                "Parse saved snapshots without network calls",
-                "/normalize",
-                True,
-            ),
-            ("Exit Frontier Radar", "End this local session", "/quit", True),
-        ]
-        for title, help_text, raw, execute in commands:
+        for option in tui_command_options(self._locale):
             callback = (
-                partial(self._accept_raw, raw)
-                if execute
-                else partial(self._prefill_composer, raw)
+                partial(self._accept_raw, option.raw)
+                if option.execute
+                else partial(self._prefill_composer, option.raw)
             )
-            yield SystemCommand(title, help_text, callback)
+            yield SystemCommand(option.title, option.help_text, callback)
 
     @on(Input.Submitted, "#composer")
     def handle_submission(self, event: Input.Submitted) -> None:
@@ -245,8 +237,13 @@ class FrontierRadarApp(App[None]):
             self.query_one("#composer", Input).focus()
             return
         self.add_class("started")
+        self._current_command = raw
         self.query_one("#view-subtitle", Static).update(
-            f"CURRENT PROCESS · {raw}"
+            tui_text(
+                self._locale,
+                TUITextKey.CURRENT_PROCESS,
+                command=raw,
+            )
         )
         self._mount_timeline(
             Horizontal(
@@ -256,12 +253,12 @@ class FrontierRadarApp(App[None]):
             )
         )
         try:
-            command = self._command_service.parse(raw)
+            command = self._command_service.parse(raw, locale=self._locale)
         except TUIInputError as error:
-            self._execution_log.append(f"FAILED  {raw}")
+            self._execution_log.append((TUITextKey.LOG_FAILED, raw))
             self._mount_timeline(
                 Static(
-                    "×  INPUT REJECTED",
+                    tui_text(self._locale, TUITextKey.INPUT_REJECTED),
                     classes="signal signal-rail signal-failed",
                 )
             )
@@ -269,7 +266,9 @@ class FrontierRadarApp(App[None]):
                 Horizontal(
                     Static("RADAR", classes="message-role"),
                     Markdown(
-                        f"### Command not accepted\n\n{error}",
+                        "### "
+                        f"{tui_text(self._locale, TUITextKey.COMMAND_NOT_ACCEPTED)}"
+                        f"\n\n{error}",
                         classes="command-result process-body result-failed",
                     ),
                     classes="message-row radar-message",
@@ -278,9 +277,12 @@ class FrontierRadarApp(App[None]):
             self._render_drawer()
             self.query_one("#composer", Input).focus()
             return
+        if command.action is TUIAction.SET_LANGUAGE:
+            self._locale = TUILocale(str(command.parameters["language"]))
+            self._apply_locale()
         if command.requires_confirmation:
             self.push_screen(
-                ConfirmFeedbackReset(),
+                ConfirmFeedbackReset(self._locale),
                 partial(self._finish_confirmation, command),
             )
             return
@@ -290,10 +292,10 @@ class FrontierRadarApp(App[None]):
         if confirmed:
             self._start_command(command, confirmed=True)
             return
-        self._execution_log.append(f"CANCEL  {command.raw}")
+        self._execution_log.append((TUITextKey.LOG_CANCELLED, command.raw))
         self._mount_timeline(
             Static(
-                "—  CANCELLED",
+                tui_text(self._locale, TUITextKey.SIGNAL_CANCELLED),
                 classes="signal signal-rail signal-cancelled",
             )
         )
@@ -303,10 +305,10 @@ class FrontierRadarApp(App[None]):
     def _start_command(self, command: TUICommand, confirmed: bool = False) -> None:
         composer = self.query_one("#composer", Input)
         composer.disabled = True
-        self._execution_log.append(f"START   {command.raw}")
+        self._execution_log.append((TUITextKey.LOG_STARTED, command.raw))
         self._mount_timeline(
             Static(
-                "○  RUNNING",
+                tui_text(self._locale, TUITextKey.SIGNAL_RUNNING),
                 classes="signal signal-rail signal-start",
             )
         )
@@ -315,7 +317,11 @@ class FrontierRadarApp(App[None]):
 
     @work(thread=True, group="command", exclusive=True)
     def _run_command(self, command: TUICommand, confirmed: bool) -> None:
-        result = self._command_service.execute(command, confirmed=confirmed)
+        result = self._command_service.execute(
+            command,
+            confirmed=confirmed,
+            locale=self._locale,
+        )
         self.call_from_thread(self._finish_command, command, result)
 
     def _finish_command(
@@ -340,15 +346,22 @@ class FrontierRadarApp(App[None]):
             )
         )
         signal_class = "signal-complete" if result.ok else "signal-failed"
-        signal_text = "●  COMPLETED" if result.ok else "×  FAILED"
+        signal_text = tui_text(
+            self._locale,
+            (
+                TUITextKey.SIGNAL_COMPLETED
+                if result.ok
+                else TUITextKey.SIGNAL_FAILED
+            ),
+        )
         self._mount_timeline(
             Static(
                 signal_text,
                 classes=f"signal signal-rail {signal_class}",
             )
         )
-        state = "DONE" if result.ok else "FAILED"
-        self._execution_log.append(f"{state:<7} {command.raw}")
+        state_key = TUITextKey.LOG_DONE if result.ok else TUITextKey.LOG_FAILED
+        self._execution_log.append((state_key, command.raw))
         if result.drawer_view is not None:
             self._drawer_view = result.drawer_view
         self._render_drawer()
@@ -367,15 +380,56 @@ class FrontierRadarApp(App[None]):
 
     def _apply_dashboard(self, dashboard: TUIDashboard) -> None:
         self._dashboard = dashboard
-        model = dashboard.model_label or "MODEL —"
+        model = dashboard.model_label or "—"
         self.query_one("#status-line", Static).update(
-            f"DB {dashboard.database_status.upper()} · {model}"
+            tui_text(
+                self._locale,
+                TUITextKey.STATUS_LINE,
+                database=dashboard.database_status.upper(),
+                model=model,
+            )
         )
         self._render_drawer()
+
+    def _apply_locale(self) -> None:
+        """Refresh mounted static copy without rewriting prior result cards."""
+        self.query_one("#drawer-section-current", Static).update(
+            tui_text(self._locale, TUITextKey.CURRENT_SESSION)
+        )
+        self.query_one("#drawer-section-system", Static).update(
+            tui_text(self._locale, TUITextKey.SYSTEM)
+        )
+        self.query_one("#drawer-boundary", Static).update(
+            tui_text(self._locale, TUITextKey.SAFETY_BOUNDARY)
+        )
+        self.query_one("#boundary-copy", Static).update(
+            tui_text(self._locale, TUITextKey.WELCOME)
+        )
+        self.query_one("#view-title", Static).update(
+            tui_text(self._locale, TUITextKey.EXECUTION)
+        )
+        self.query_one("#view-subtitle", Static).update(
+            tui_text(
+                self._locale,
+                TUITextKey.CURRENT_PROCESS,
+                command=self._current_command,
+            )
+        )
+        self.query_one("#composer", Input).placeholder = tui_text(
+            self._locale,
+            TUITextKey.COMPOSER_PLACEHOLDER,
+        )
+        self.query_one("#composer-meta", Static).update(
+            tui_text(self._locale, TUITextKey.COMPOSER_META)
+        )
+        self._apply_dashboard(self._dashboard)
 
     def _show_drawer_view(self, view: TUIDrawerView) -> None:
         self._drawer_view = view
         self._render_drawer()
+        drawer_scroll = self.query_one("#drawer-scroll", VerticalScroll)
+        drawer_scroll.scroll_home(animate=False)
+        drawer_scroll.focus()
 
     def _render_drawer(self) -> None:
         content = self.query_one("#drawer-content", Markdown)
@@ -389,50 +443,92 @@ class FrontierRadarApp(App[None]):
         }
         for view, button in buttons.items():
             button.set_class(view is self._drawer_view, "active")
+        buttons[TUIDrawerView.EXECUTION].label = tui_text(
+            self._locale,
+            TUITextKey.EXECUTION,
+        )
         buttons[TUIDrawerView.RECOMMENDATIONS].label = (
-            f"◇  推荐文章  ·  {len(self._dashboard.recommendations)}"
+            f"{tui_text(self._locale, TUITextKey.RECOMMENDATIONS)}"
+            f"  ·  {len(self._dashboard.recommendations)}"
+        )
+        buttons[TUIDrawerView.DIGEST].label = tui_text(
+            self._locale,
+            TUITextKey.DAILY_BRIEF,
         )
         buttons[TUIDrawerView.FEEDBACK].label = (
-            f"♡  反馈记录  ·  {len(self._dashboard.feedback)}"
+            f"{tui_text(self._locale, TUITextKey.FEEDBACK_RECORDS)}"
+            f"  ·  {len(self._dashboard.feedback)}"
         )
         model = self._dashboard.model_label or "—"
         self.query_one("#drawer-system", Static).update(
-            f"DATABASE  {self._dashboard.database_status.upper()}\nMODEL     {model}"
+            tui_text(
+                self._locale,
+                TUITextKey.DRAWER_SYSTEM,
+                database=self._dashboard.database_status.upper(),
+                model=model,
+            )
         )
         if self._drawer_view is TUIDrawerView.EXECUTION:
-            body = "**执行记录**\n\n" + (
-                "\n\n".join(f"`{entry}`" for entry in self._execution_log)
+            body = f"**{tui_text(self._locale, TUITextKey.EXECUTION)}**\n\n" + (
+                "\n\n".join(
+                    f"`{tui_text(self._locale, state_key):<7} {raw}`"
+                    for state_key, raw in self._execution_log
+                )
                 if self._execution_log
-                else "No commands in this session."
+                else tui_text(
+                    self._locale,
+                    TUITextKey.DRAWER_EXECUTION_EMPTY,
+                )
             )
         elif self._drawer_view is TUIDrawerView.RECOMMENDATIONS:
-            body = "**推荐文章**\n\n" + (
+            body = (
+                f"**{tui_text(self._locale, TUITextKey.RECOMMENDATIONS)}**\n\n"
+                + (
                 "\n\n".join(
                     f"**{item.score}** · `#{item.article_id}` · {item.title}"
                     for item in self._dashboard.recommendations
                 )
                 if self._dashboard.recommendations
-                else "No stored positive rankings. Run `/rank`."
+                else tui_text(
+                    self._locale,
+                    TUITextKey.DRAWER_RECOMMENDATIONS_EMPTY,
+                )
+                )
             )
         elif self._drawer_view is TUIDrawerView.DIGEST:
             body = self._dashboard.digest_markdown or (
-                "**今日简报**\n\nNo brief in this session. Run `/digest`."
+                f"**{tui_text(self._locale, TUITextKey.DAILY_BRIEF)}**\n\n"
+                f"{tui_text(self._locale, TUITextKey.DRAWER_DIGEST_EMPTY)}"
             )
         else:
-            body = "**反馈记录**\n\n" + (
+            body = (
+                f"**{tui_text(self._locale, TUITextKey.FEEDBACK_RECORDS)}**\n\n"
+                + (
                 "\n\n".join(
                     f"`#{item.article_id}` · {item.title} · "
-                    f"{self._feedback_label(item.decision)}"
+                    f"{self._feedback_label(item.decision, self._locale)}"
                     for item in self._dashboard.feedback
                 )
                 if self._dashboard.feedback
-                else "No feedback saved."
+                else tui_text(
+                    self._locale,
+                    TUITextKey.DRAWER_FEEDBACK_EMPTY,
+                )
+                )
             )
         content.update(body)
 
     @staticmethod
-    def _feedback_label(decision: FeedbackDecision) -> str:
-        return "liked" if decision is FeedbackDecision.LIKE else "disliked"
+    def _feedback_label(
+        decision: FeedbackDecision,
+        locale: TUILocale,
+    ) -> str:
+        key = (
+            TUITextKey.DECISION_LIKED
+            if decision is FeedbackDecision.LIKE
+            else TUITextKey.DECISION_DISLIKED
+        )
+        return tui_text(locale, key)
 
     def _mount_timeline(self, widget: Static | Markdown | Horizontal) -> None:
         timeline = self.query_one("#timeline", VerticalScroll)

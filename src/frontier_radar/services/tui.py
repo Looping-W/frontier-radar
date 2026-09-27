@@ -4,6 +4,7 @@ from typing import Protocol
 from pydantic import ValidationError
 
 from frontier_radar.schemas.collection import CollectionResult
+from frontier_radar.schemas.curation import CurationLanguage
 from frontier_radar.schemas.feedback import (
     ArticleFeedback,
     FeedbackDecision,
@@ -26,8 +27,11 @@ from frontier_radar.schemas.tui import (
     TUIDashboard,
     TUIDigestInput,
     TUIDrawerView,
+    TUILanguageInput,
+    TUILocale,
     TUIQueryInput,
 )
+from frontier_radar.services.tui_text import TUITextKey, tui_text
 
 
 class TUIInputError(ValueError):
@@ -61,7 +65,11 @@ class CurationResult(Protocol):
 
 
 class CurationCommands(Protocol):
-    def create_digest(self, limit: int) -> CurationResult: ...
+    def create_digest(
+        self,
+        limit: int,
+        language: CurationLanguage = CurationLanguage.EN,
+    ) -> CurationResult: ...
 
 
 class InterestCommands(Protocol):
@@ -128,15 +136,20 @@ class TUICommandService:
         self._current_digest: str | None = None
 
     @staticmethod
-    def parse(raw: str) -> TUICommand:
+    def parse(
+        raw: str,
+        locale: TUILocale = TUILocale.EN,
+    ) -> TUICommand:
         """Parse one slash command without guessing user intent."""
         try:
             tokens = shlex.split(raw.strip())
         except ValueError as error:
-            raise TUIInputError(f"Invalid quoting: {error}") from error
+            raise TUIInputError(
+                tui_text(locale, TUITextKey.INVALID_QUOTING, detail=error)
+            ) from error
         if not tokens or not tokens[0].startswith("/"):
             raise TUIInputError(
-                "Phase 6 accepts explicit slash commands only; use /help."
+                tui_text(locale, TUITextKey.EXPLICIT_COMMANDS_ONLY)
             )
 
         command = tokens[0].lower()
@@ -155,7 +168,13 @@ class TUICommandService:
             }
             if command in argument_free_commands:
                 if arguments:
-                    raise TUIInputError(f"{command} does not accept arguments")
+                    raise TUIInputError(
+                        tui_text(
+                            locale,
+                            TUITextKey.NO_ARGUMENTS,
+                            command=command,
+                        )
+                    )
                 action = {
                     "/help": TUIAction.HELP,
                     "/health": TUIAction.HEALTH,
@@ -170,11 +189,16 @@ class TUICommandService:
                 return TUICommand(raw=raw, action=action)
 
             if command == "/collect":
-                return TUICommandService._parse_collect(raw, arguments)
+                return TUICommandService._parse_collect(raw, arguments, locale)
             if command == "/digest":
-                return TUICommandService._parse_digest(raw, arguments)
+                return TUICommandService._parse_digest(raw, arguments, locale)
             if command in {"/topic", "/keyword"}:
-                return TUICommandService._parse_interest(raw, command, arguments)
+                return TUICommandService._parse_interest(
+                    raw,
+                    command,
+                    arguments,
+                    locale,
+                )
             if command == "/feedback":
                 if not arguments:
                     return TUICommand(raw=raw, action=TUIAction.LIST_FEEDBACK)
@@ -184,20 +208,35 @@ class TUICommandService:
                         action=TUIAction.RESET_FEEDBACK,
                         requires_confirmation=True,
                     )
-                raise TUIInputError("Use /feedback or /feedback reset")
+                raise TUIInputError(tui_text(locale, TUITextKey.USE_FEEDBACK))
             if command in {"/like", "/dislike", "/undo"}:
                 return TUICommandService._parse_article_action(
-                    raw, command, arguments
+                    raw,
+                    command,
+                    arguments,
+                    locale,
                 )
+            if command == "/lang":
+                return TUICommandService._parse_language(raw, arguments, locale)
         except (ValidationError, ValueError) as error:
             if isinstance(error, TUIInputError):
                 raise
             raise TUIInputError(str(error)) from error
 
-        raise TUIInputError(f"Unknown command: {tokens[0]}; use /help.")
+        raise TUIInputError(
+            tui_text(
+                locale,
+                TUITextKey.UNKNOWN_COMMAND,
+                command=tokens[0],
+            )
+        )
 
     @staticmethod
-    def _parse_collect(raw: str, arguments: list[str]) -> TUICommand:
+    def _parse_collect(
+        raw: str,
+        arguments: list[str],
+        locale: TUILocale,
+    ) -> TUICommand:
         if arguments == ["hn"]:
             return TUICommand(raw=raw, action=TUIAction.COLLECT_HN)
         if arguments == ["all"]:
@@ -209,13 +248,24 @@ class TUICommandService:
                 action=TUIAction.COLLECT_ARXIV,
                 parameters={"query": query},
             )
-        raise TUIInputError("Use /collect hn, /collect all, or /collect arxiv QUERY")
+        raise TUIInputError(tui_text(locale, TUITextKey.USE_COLLECT))
 
     @staticmethod
-    def _parse_digest(raw: str, arguments: list[str]) -> TUICommand:
+    def _parse_digest(
+        raw: str,
+        arguments: list[str],
+        locale: TUILocale,
+    ) -> TUICommand:
         if len(arguments) > 1:
-            raise TUIInputError("Use /digest or /digest LIMIT")
-        limit = TUIDigestInput(limit=int(arguments[0]) if arguments else 10).limit
+            raise TUIInputError(tui_text(locale, TUITextKey.USE_DIGEST))
+        try:
+            limit = TUIDigestInput(
+                limit=int(arguments[0]) if arguments else 10
+            ).limit
+        except (ValidationError, ValueError) as error:
+            raise TUIInputError(
+                tui_text(locale, TUITextKey.USE_DIGEST)
+            ) from error
         return TUICommand(
             raw=raw,
             action=TUIAction.DIGEST,
@@ -227,16 +277,32 @@ class TUICommandService:
         raw: str,
         command: str,
         arguments: list[str],
+        locale: TUILocale,
     ) -> TUICommand:
         if len(arguments) < 2:
-            raise TUIInputError(f"Use {command} add, update, or remove with a name")
+            raise TUIInputError(
+                tui_text(
+                    locale,
+                    TUITextKey.USE_INTEREST,
+                    command=command,
+                )
+            )
         operation = arguments[0]
         kind = command.removeprefix("/")
         if operation in {"add", "update"} and len(arguments) >= 3:
-            interest = WeightedInterestInput(
-                weight=int(arguments[1]),
-                name=" ".join(arguments[2:]),
-            )
+            try:
+                interest = WeightedInterestInput(
+                    weight=int(arguments[1]),
+                    name=" ".join(arguments[2:]),
+                )
+            except (ValidationError, ValueError) as error:
+                raise TUIInputError(
+                    tui_text(
+                        locale,
+                        TUITextKey.USE_INTEREST,
+                        command=command,
+                    )
+                ) from error
             action = TUIAction(f"{operation}_{kind}")
             return TUICommand(
                 raw=raw,
@@ -244,58 +310,112 @@ class TUICommandService:
                 parameters={"weight": interest.weight, "name": interest.name},
             )
         if operation == "remove":
-            interest = InterestNameInput(name=" ".join(arguments[1:]))
+            try:
+                interest = InterestNameInput(name=" ".join(arguments[1:]))
+            except ValidationError as error:
+                raise TUIInputError(
+                    tui_text(
+                        locale,
+                        TUITextKey.USE_INTEREST,
+                        command=command,
+                    )
+                ) from error
             return TUICommand(
                 raw=raw,
                 action=TUIAction(f"remove_{kind}"),
                 parameters={"name": interest.name},
             )
-        raise TUIInputError(f"Use {command} add, update, or remove with a name")
+        raise TUIInputError(
+            tui_text(locale, TUITextKey.USE_INTEREST, command=command)
+        )
 
     @staticmethod
     def _parse_article_action(
         raw: str,
         command: str,
         arguments: list[str],
+        locale: TUILocale,
     ) -> TUICommand:
         if len(arguments) != 1:
-            raise TUIInputError(f"Use {command} ARTICLE_ID")
-        article_id = int(arguments[0])
-        if command == "/undo":
-            FeedbackInput(article_id=article_id, decision=FeedbackDecision.LIKE)
-            action = TUIAction.UNDO
-        else:
-            decision = (
-                FeedbackDecision.LIKE
-                if command == "/like"
-                else FeedbackDecision.SKIP
+            raise TUIInputError(
+                tui_text(
+                    locale,
+                    TUITextKey.USE_ARTICLE_ACTION,
+                    command=command,
+                )
             )
-            FeedbackInput(article_id=article_id, decision=decision)
-            action = TUIAction.LIKE if command == "/like" else TUIAction.DISLIKE
+        try:
+            article_id = int(arguments[0])
+            if command == "/undo":
+                FeedbackInput(article_id=article_id, decision=FeedbackDecision.LIKE)
+                action = TUIAction.UNDO
+            else:
+                decision = (
+                    FeedbackDecision.LIKE
+                    if command == "/like"
+                    else FeedbackDecision.SKIP
+                )
+                FeedbackInput(article_id=article_id, decision=decision)
+                action = TUIAction.LIKE if command == "/like" else TUIAction.DISLIKE
+        except (ValidationError, ValueError) as error:
+            raise TUIInputError(
+                tui_text(
+                    locale,
+                    TUITextKey.USE_ARTICLE_ACTION,
+                    command=command,
+                )
+            ) from error
         return TUICommand(
             raw=raw,
             action=action,
             parameters={"article_id": article_id},
         )
 
+    @staticmethod
+    def _parse_language(
+        raw: str,
+        arguments: list[str],
+        locale: TUILocale,
+    ) -> TUICommand:
+        if len(arguments) != 1:
+            raise TUIInputError(tui_text(locale, TUITextKey.USE_LANGUAGE))
+        try:
+            language = TUILanguageInput(language=arguments[0]).language
+        except ValidationError as error:
+            raise TUIInputError(
+                tui_text(locale, TUITextKey.USE_LANGUAGE)
+            ) from error
+        return TUICommand(
+            raw=raw,
+            action=TUIAction.SET_LANGUAGE,
+            parameters={"language": language.value},
+        )
+
     def execute(
         self,
         command: TUICommand,
         confirmed: bool = False,
+        locale: TUILocale = TUILocale.EN,
     ) -> TUICommandResult:
         """Run one validated command against explicitly injected services."""
         if command.requires_confirmation and not confirmed:
             return TUICommandResult(
                 ok=False,
-                title="Confirmation required",
-                body="Explicit confirmation is required before feedback reset.",
+                title=tui_text(
+                    locale,
+                    TUITextKey.CONFIRMATION_REQUIRED_TITLE,
+                ),
+                body=tui_text(
+                    locale,
+                    TUITextKey.CONFIRMATION_REQUIRED_BODY,
+                ),
             )
         try:
-            return self._execute(command)
+            return self._execute(command, locale)
         except Exception as error:
             return TUICommandResult(
                 ok=False,
-                title="Command failed",
+                title=tui_text(locale, TUITextKey.COMMAND_FAILED),
                 body=str(error) or error.__class__.__name__,
             )
 
@@ -335,77 +455,131 @@ class TUICommandService:
             notices=notices,
         )
 
-    def _execute(self, command: TUICommand) -> TUICommandResult:
+    def _execute(
+        self,
+        command: TUICommand,
+        locale: TUILocale,
+    ) -> TUICommandResult:
         action = command.action
         parameters = command.parameters
         if action is TUIAction.HELP:
             return TUICommandResult(
                 ok=True,
-                title="Available commands",
-                body=self._help_text(),
+                title=tui_text(locale, TUITextKey.HELP_TITLE),
+                body=tui_text(locale, TUITextKey.HELP_BODY),
+            )
+        if action is TUIAction.SET_LANGUAGE:
+            target = TUILocale(str(parameters["language"]))
+            key = (
+                TUITextKey.LANGUAGE_ZH
+                if target is TUILocale.ZH
+                else TUITextKey.LANGUAGE_EN
+            )
+            return TUICommandResult(
+                ok=True,
+                title=tui_text(target, TUITextKey.LANGUAGE_TITLE),
+                body=tui_text(target, key),
             )
         if action is TUIAction.QUIT:
             return TUICommandResult(
                 ok=True,
-                title="Exit Frontier Radar",
-                body="Session data will not be saved.",
+                title=tui_text(locale, TUITextKey.EXIT_TITLE),
+                body=tui_text(locale, TUITextKey.EXIT_BODY),
                 should_quit=True,
             )
         if action is TUIAction.HEALTH:
             status = self._health.check()
-            detail = f"\nDetail: {status.detail}" if status.detail else ""
+            detail = (
+                tui_text(
+                    locale,
+                    TUITextKey.HEALTH_DETAIL,
+                    detail=status.detail,
+                )
+                if status.detail
+                else ""
+            )
             return TUICommandResult(
                 ok=status.database == "ok",
-                title="System health",
-                body=(
-                    f"Application: {status.application}\n"
-                    f"Database: {status.database}{detail}"
+                title=tui_text(locale, TUITextKey.HEALTH_TITLE),
+                body=tui_text(
+                    locale,
+                    TUITextKey.HEALTH_BODY,
+                    application=status.application,
+                    database=status.database,
+                    detail=detail,
                 ),
             )
         if action is TUIAction.MODEL:
-            return self._model_result(self._llm.show())
+            return self._model_result(self._llm.show(), locale)
         if action is TUIAction.COLLECT_HN:
             return self._collection_result(
-                [self._collection.collect_hacker_news()]
+                [self._collection.collect_hacker_news()],
+                locale,
             )
         if action is TUIAction.COLLECT_ALL:
-            return self._collection_result(self._collection.collect_all())
+            return self._collection_result(
+                self._collection.collect_all(),
+                locale,
+            )
         if action is TUIAction.COLLECT_ARXIV:
             return self._collection_result(
-                [self._collection.collect_arxiv(str(parameters["query"]))]
+                [self._collection.collect_arxiv(str(parameters["query"]))],
+                locale,
             )
         if action is TUIAction.NORMALIZE:
-            return self._normalization_result(self._normalization.normalize())
+            return self._normalization_result(
+                self._normalization.normalize(),
+                locale,
+            )
         if action is TUIAction.RANK:
-            return self._ranking_result(self._ranking.rank_default_profile())
+            return self._ranking_result(
+                self._ranking.rank_default_profile(),
+                locale,
+            )
         if action is TUIAction.REFRESH:
             if self._refresh is None:
                 raise RuntimeError("Refresh service is unavailable")
-            return self._refresh_result(self._refresh.refresh())
+            return self._refresh_result(self._refresh.refresh(), locale)
         if action is TUIAction.DIGEST:
-            result = self._curation.create_digest(int(parameters["limit"]))
+            language = (
+                CurationLanguage.ZH
+                if locale is TUILocale.ZH
+                else CurationLanguage.EN
+            )
+            result = self._curation.create_digest(
+                int(parameters["limit"]),
+                language=language,
+            )
             self._current_digest = result.markdown
             return TUICommandResult(
                 ok=True,
-                title="Daily brief",
+                title=tui_text(locale, TUITextKey.DIGEST_TITLE),
                 body=result.markdown,
                 drawer_view=TUIDrawerView.DIGEST,
             )
         if action is TUIAction.LIST_TOPICS:
-            return self._interest_list("Topics", self._interests.list_topics())
+            return self._interest_list(
+                TUITextKey.TOPICS_TITLE,
+                self._interests.list_topics(),
+                locale,
+            )
         if action is TUIAction.LIST_KEYWORDS:
-            return self._interest_list("Keywords", self._interests.list_keywords())
+            return self._interest_list(
+                TUITextKey.KEYWORDS_TITLE,
+                self._interests.list_keywords(),
+                locale,
+            )
         if action in {
             TUIAction.ADD_TOPIC,
             TUIAction.UPDATE_TOPIC,
             TUIAction.ADD_KEYWORD,
             TUIAction.UPDATE_KEYWORD,
         }:
-            return self._write_interest(action, parameters)
+            return self._write_interest(action, parameters, locale)
         if action in {TUIAction.REMOVE_TOPIC, TUIAction.REMOVE_KEYWORD}:
-            return self._remove_interest(action, parameters)
+            return self._remove_interest(action, parameters, locale)
         if action is TUIAction.LIST_FEEDBACK:
-            return self._feedback_result(self._feedback.list())
+            return self._feedback_result(self._feedback.list(), locale)
         if action in {TUIAction.LIKE, TUIAction.DISLIKE}:
             decision = (
                 FeedbackDecision.LIKE
@@ -420,101 +594,123 @@ class TUICommandService:
             )
             return TUICommandResult(
                 ok=True,
-                title="Feedback saved",
-                body=f"Article #{saved.article_id} marked {self._decision(saved)}.",
+                title=tui_text(locale, TUITextKey.FEEDBACK_SAVED),
+                body=tui_text(
+                    locale,
+                    TUITextKey.FEEDBACK_SAVED_BODY,
+                    article_id=saved.article_id,
+                    decision=self._decision(saved, locale),
+                ),
                 drawer_view=TUIDrawerView.FEEDBACK,
             )
         if action is TUIAction.UNDO:
             removed = self._feedback.undo(int(parameters["article_id"]))
             return TUICommandResult(
                 ok=True,
-                title="Feedback removed",
-                body=f"Article #{removed.article_id} is neutral.",
+                title=tui_text(locale, TUITextKey.FEEDBACK_REMOVED),
+                body=tui_text(
+                    locale,
+                    TUITextKey.FEEDBACK_REMOVED_BODY,
+                    article_id=removed.article_id,
+                ),
                 drawer_view=TUIDrawerView.FEEDBACK,
             )
         if action is TUIAction.RESET_FEEDBACK:
             count = self._feedback.reset()
             return TUICommandResult(
                 ok=True,
-                title="Feedback reset",
-                body=f"{count} feedback {self._plural(count, 'item')} removed.",
+                title=tui_text(locale, TUITextKey.FEEDBACK_RESET),
+                body=tui_text(
+                    locale,
+                    TUITextKey.FEEDBACK_RESET_BODY,
+                    count=count,
+                    item_word=self._plural(count, "item"),
+                ),
                 drawer_view=TUIDrawerView.FEEDBACK,
             )
         raise RuntimeError(f"Unsupported action: {action}")
 
     @staticmethod
-    def _help_text() -> str:
-        return """Core
-/health · /model · /refresh · /rank · /digest [LIMIT]
-
-Collection
-/collect hn · /collect all · /collect arxiv QUERY · /normalize
-
-Interests
-/topics · /topic add|update WEIGHT NAME · /topic remove NAME
-/keywords · /keyword add|update WEIGHT NAME · /keyword remove NAME
-
-Feedback
-/feedback · /like ARTICLE_ID · /dislike ARTICLE_ID · /undo ARTICLE_ID
-/feedback reset
-
-Session
-/help · /quit"""
-
-    @staticmethod
-    def _model_result(configuration: LLMConfiguration | None) -> TUICommandResult:
+    def _model_result(
+        configuration: LLMConfiguration | None,
+        locale: TUILocale,
+    ) -> TUICommandResult:
         if configuration is None:
             return TUICommandResult(
                 ok=True,
-                title="Model configuration",
-                body="No local model configuration is saved.",
+                title=tui_text(locale, TUITextKey.MODEL_TITLE),
+                body=tui_text(locale, TUITextKey.MODEL_EMPTY),
             )
         return TUICommandResult(
             ok=True,
-            title="Model configuration",
-            body=(
-                f"Provider: {configuration.provider_label}\n"
-                f"Protocol: {configuration.api_protocol.replace('_', '-')}\n"
-                f"Endpoint: {configuration.base_url}\n"
-                f"Model: {configuration.model_name}"
+            title=tui_text(locale, TUITextKey.MODEL_TITLE),
+            body=tui_text(
+                locale,
+                TUITextKey.MODEL_BODY,
+                provider=configuration.provider_label,
+                protocol=configuration.api_protocol.replace("_", "-"),
+                endpoint=configuration.base_url,
+                model=configuration.model_name,
             ),
         )
 
     @staticmethod
-    def _collection_result(results: list[CollectionResult]) -> TUICommandResult:
+    def _collection_result(
+        results: list[CollectionResult],
+        locale: TUILocale,
+    ) -> TUICommandResult:
         labels = {"hacker_news": "Hacker News", "arxiv": "arXiv"}
         lines = [
-            f"{labels.get(result.source, result.source)}: "
-            f"{result.item_count} items collected; "
-            f"{len(result.snapshots)} raw responses saved."
+            tui_text(
+                locale,
+                TUITextKey.COLLECTION_LINE,
+                source=labels.get(result.source, result.source),
+                items=result.item_count,
+                snapshots=len(result.snapshots),
+            )
             for result in results
         ]
         return TUICommandResult(
             ok=True,
-            title="Collection complete",
+            title=tui_text(locale, TUITextKey.COLLECTION_TITLE),
             body="\n".join(lines),
         )
 
     @staticmethod
-    def _normalization_result(result: NormalizationResult) -> TUICommandResult:
+    def _normalization_result(
+        result: NormalizationResult,
+        locale: TUILocale,
+    ) -> TUICommandResult:
         return TUICommandResult(
             ok=True,
-            title="Normalization complete",
-            body=(
-                f"{result.snapshots_processed} snapshots processed; "
-                f"{result.raw_items_parsed} raw items parsed; "
-                f"{result.raw_items_created} raw items saved; "
-                f"{result.articles_created} articles created; "
-                f"{result.merged_items} items merged."
+            title=tui_text(locale, TUITextKey.NORMALIZATION_TITLE),
+            body=tui_text(
+                locale,
+                TUITextKey.NORMALIZATION_BODY,
+                snapshots=result.snapshots_processed,
+                parsed=result.raw_items_parsed,
+                saved=result.raw_items_created,
+                articles=result.articles_created,
+                merged=result.merged_items,
             ),
         )
 
     @staticmethod
-    def _ranking_result(result: RankingResult) -> TUICommandResult:
+    def _ranking_result(
+        result: RankingResult,
+        locale: TUILocale,
+    ) -> TUICommandResult:
         lines = [
-            f"{result.articles_scored} articles scored; "
-            f"{len(result.rankings)} relevant "
-            f"{TUICommandService._plural(len(result.rankings), 'article')}."
+            tui_text(
+                locale,
+                TUITextKey.RANKING_SUMMARY,
+                scored=result.articles_scored,
+                relevant=len(result.rankings),
+                article_word=TUICommandService._plural(
+                    len(result.rankings),
+                    "article",
+                ),
+            )
         ]
         lines.extend(
             f"{ranking.score} · #{ranking.article_id} · {ranking.title}"
@@ -522,99 +718,154 @@ Session
         )
         return TUICommandResult(
             ok=True,
-            title="Ranking complete",
+            title=tui_text(locale, TUITextKey.RANKING_TITLE),
             body="\n".join(lines),
             drawer_view=TUIDrawerView.RECOMMENDATIONS,
         )
 
     @staticmethod
-    def _refresh_result(result: RefreshResult) -> TUICommandResult:
+    def _refresh_result(
+        result: RefreshResult,
+        locale: TUILocale,
+    ) -> TUICommandResult:
         runs = len(result.collection_results)
         relevant = len(result.ranking.rankings)
         return TUICommandResult(
             ok=True,
-            title="Refresh complete",
-            body=(
-                f"{runs} source {TUICommandService._plural(runs, 'run')} collected.\n"
-                f"{result.normalization.snapshots_processed} snapshots processed.\n"
-                f"{result.ranking.articles_scored} articles scored; "
-                f"{relevant} relevant "
-                f"{TUICommandService._plural(relevant, 'article')}."
+            title=tui_text(locale, TUITextKey.REFRESH_TITLE),
+            body=tui_text(
+                locale,
+                TUITextKey.REFRESH_BODY,
+                runs=runs,
+                run_word=TUICommandService._plural(runs, "run"),
+                snapshots=result.normalization.snapshots_processed,
+                scored=result.ranking.articles_scored,
+                relevant=relevant,
+                article_word=TUICommandService._plural(relevant, "article"),
             ),
             drawer_view=TUIDrawerView.RECOMMENDATIONS,
         )
 
     @staticmethod
-    def _interest_list(title: str, terms: list[InterestTerm]) -> TUICommandResult:
+    def _interest_list(
+        title_key: TUITextKey,
+        terms: list[InterestTerm],
+        locale: TUILocale,
+    ) -> TUICommandResult:
         body = (
-            "\n".join(f"- {term.name} · weight {term.weight}" for term in terms)
+            "\n".join(
+                tui_text(
+                    locale,
+                    TUITextKey.WEIGHTED_TERM,
+                    name=term.name,
+                    weight=term.weight,
+                )
+                for term in terms
+            )
             if terms
-            else "None saved."
+            else tui_text(locale, TUITextKey.NONE_SAVED)
         )
-        return TUICommandResult(ok=True, title=title, body=body)
+        return TUICommandResult(
+            ok=True,
+            title=tui_text(locale, title_key),
+            body=body,
+        )
 
     def _write_interest(
         self,
         action: TUIAction,
         parameters: dict[str, str | int],
+        locale: TUILocale,
     ) -> TUICommandResult:
         value = WeightedInterestInput(
             name=str(parameters["name"]),
             weight=int(parameters["weight"]),
         )
         routes = {
-            TUIAction.ADD_TOPIC: (self._interests.add_topic, "Topic saved"),
-            TUIAction.UPDATE_TOPIC: (self._interests.update_topic, "Topic updated"),
-            TUIAction.ADD_KEYWORD: (self._interests.add_keyword, "Keyword saved"),
+            TUIAction.ADD_TOPIC: (
+                self._interests.add_topic,
+                TUITextKey.TOPIC_SAVED,
+            ),
+            TUIAction.UPDATE_TOPIC: (
+                self._interests.update_topic,
+                TUITextKey.TOPIC_UPDATED,
+            ),
+            TUIAction.ADD_KEYWORD: (
+                self._interests.add_keyword,
+                TUITextKey.KEYWORD_SAVED,
+            ),
             TUIAction.UPDATE_KEYWORD: (
                 self._interests.update_keyword,
-                "Keyword updated",
+                TUITextKey.KEYWORD_UPDATED,
             ),
         }
-        operation, title = routes[action]
+        operation, title_key = routes[action]
         term = operation(value)
         return TUICommandResult(
             ok=True,
-            title=title,
-            body=f"{term.name} · weight {term.weight}",
+            title=tui_text(locale, title_key),
+            body=tui_text(
+                locale,
+                TUITextKey.WEIGHTED_TERM,
+                name=term.name,
+                weight=term.weight,
+            ).removeprefix("- "),
         )
 
     def _remove_interest(
         self,
         action: TUIAction,
         parameters: dict[str, str | int],
+        locale: TUILocale,
     ) -> TUICommandResult:
         value = InterestNameInput(name=str(parameters["name"]))
         if action is TUIAction.REMOVE_TOPIC:
             term = self._interests.remove_topic(value)
-            title = "Topic removed"
+            title_key = TUITextKey.TOPIC_REMOVED
         else:
             term = self._interests.remove_keyword(value)
-            title = "Keyword removed"
-        return TUICommandResult(ok=True, title=title, body=term.name)
+            title_key = TUITextKey.KEYWORD_REMOVED
+        return TUICommandResult(
+            ok=True,
+            title=tui_text(locale, title_key),
+            body=term.name,
+        )
 
     @staticmethod
-    def _feedback_result(items: list[ArticleFeedback]) -> TUICommandResult:
+    def _feedback_result(
+        items: list[ArticleFeedback],
+        locale: TUILocale,
+    ) -> TUICommandResult:
         body = (
             "\n".join(
-                f"- #{item.article_id} · {item.title} · "
-                f"{TUICommandService._decision(item)} · "
-                f"{item.recorded_at.isoformat()}"
+                tui_text(
+                    locale,
+                    TUITextKey.FEEDBACK_LINE,
+                    article_id=item.article_id,
+                    title=item.title,
+                    decision=TUICommandService._decision(item, locale),
+                    recorded_at=item.recorded_at.isoformat(),
+                )
                 for item in items
             )
             if items
-            else "No feedback saved."
+            else tui_text(locale, TUITextKey.FEEDBACK_EMPTY)
         )
         return TUICommandResult(
             ok=True,
-            title="Feedback",
+            title=tui_text(locale, TUITextKey.FEEDBACK_TITLE),
             body=body,
             drawer_view=TUIDrawerView.FEEDBACK,
         )
 
     @staticmethod
-    def _decision(item: ArticleFeedback) -> str:
-        return "liked" if item.decision is FeedbackDecision.LIKE else "disliked"
+    def _decision(item: ArticleFeedback, locale: TUILocale) -> str:
+        key = (
+            TUITextKey.DECISION_LIKED
+            if item.decision is FeedbackDecision.LIKE
+            else TUITextKey.DECISION_DISLIKED
+        )
+        return tui_text(locale, key)
 
     @staticmethod
     def _plural(count: int, noun: str) -> str:

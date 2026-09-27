@@ -9,8 +9,11 @@ def test_digest_command_prints_a_completed_markdown_brief(monkeypatch):
     from frontier_radar.services.curation import CurationResult
 
     class FakeService:
-        def create_digest(self, limit):
+        def create_digest(self, limit, language):
+            from frontier_radar.schemas.curation import CurationLanguage
+
             assert limit == 5
+            assert language is CurationLanguage.ZH
             return CurationResult(
                 draft=CurationDraft(
                     overview="Saved local updates emphasize practical agent tools.",
@@ -31,7 +34,10 @@ def test_digest_command_prints_a_completed_markdown_brief(monkeypatch):
         lambda: FakeService(),
         raising=False,
     )
-    invocation = CliRunner().invoke(cli_module.app, ["digest", "--limit", "5"])
+    invocation = CliRunner().invoke(
+        cli_module.app,
+        ["digest", "--limit", "5", "--lang", "zh"],
+    )
 
     assert invocation.exit_code == 0
     assert invocation.output == "# Frontier Radar Daily Brief — 2026-09-11\n\n"

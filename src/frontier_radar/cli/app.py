@@ -17,6 +17,7 @@ from frontier_radar.repositories.interests import InterestRepository
 from frontier_radar.repositories.llm import LLMConfigurationRepository
 from frontier_radar.repositories.normalization import NormalizationRepository
 from frontier_radar.repositories.ranking import RankingRepository
+from frontier_radar.schemas.curation import CurationLanguage
 from frontier_radar.schemas.feedback import (
     ArticleFeedback,
     FeedbackDecision,
@@ -114,10 +115,11 @@ def get_curation_service() -> CurationService:
     profiles = InterestRepository(session_factory)
     repository = CurationRepository(session_factory)
 
-    def agent_factory(configuration, api_key, limit):
+    def agent_factory(configuration, api_key, limit, language):
         return CurationAgent(
             OpenAICompatibleCurationModelClient(configuration, api_key),
             ReadOnlyCurationTools(profiles, repository, limit),
+            language=language,
         )
 
     return CurationService(
@@ -576,10 +578,15 @@ def show_llm() -> None:
 @app.command("digest")
 def digest(
     limit: int = typer.Option(10, "--limit", min=1, max=20),
+    language: CurationLanguage = typer.Option(
+        CurationLanguage.EN,
+        "--lang",
+        help="Daily brief output language.",
+    ),
 ) -> None:
     """Create a structured, locally grounded Markdown daily brief."""
     try:
-        result = get_curation_service().create_digest(limit)
+        result = get_curation_service().create_digest(limit, language=language)
     except Exception as error:
         typer.echo(f"Curation failed: {error}")
         raise typer.Exit(code=1) from error

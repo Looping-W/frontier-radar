@@ -52,16 +52,16 @@ Screen {
 }
 
 .drawer-section {
-    height: 2;
-    padding: 1 1 0 1;
+    height: 1;
+    padding: 0 1;
     color: #586675;
     text-style: bold;
 }
 
 #drawer-nav {
     width: 100%;
-    height: 9;
-    margin-bottom: 1;
+    height: 8;
+    margin-bottom: 0;
 }
 
 #drawer-nav .drawer-tab {
@@ -87,18 +87,28 @@ Screen {
     text-style: bold;
 }
 
-#drawer-content {
+#drawer-scroll {
     height: 1fr;
-    padding: 1 1 0 1;
     border-top: solid #27313d;
     border-bottom: solid #27313d;
     scrollbar-color: #27313d;
     scrollbar-background: #0c1015;
 }
 
+#drawer-scroll:focus {
+    border-top: solid #34404d;
+    border-bottom: solid #34404d;
+}
+
+#drawer-content {
+    width: 100%;
+    height: auto;
+    padding: 1 1 0 1;
+}
+
 #drawer-system {
-    height: 4;
-    padding: 1;
+    height: 3;
+    padding: 0 1;
     color: #7e8a98;
 }
 

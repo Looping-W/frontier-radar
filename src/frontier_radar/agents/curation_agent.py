@@ -4,7 +4,7 @@ from typing import Protocol
 from pydantic import ValidationError
 
 from frontier_radar.agents.contracts import CurationModelClient, ModelMessage
-from frontier_radar.schemas.curation import CurationDraft
+from frontier_radar.schemas.curation import CurationDraft, CurationLanguage
 
 
 class CurationToolExecutor(Protocol):
@@ -26,9 +26,11 @@ class CurationAgent:
         self,
         client: CurationModelClient,
         tools: CurationToolExecutor,
+        language: CurationLanguage = CurationLanguage.EN,
     ) -> None:
         self._client = client
         self._tools = tools
+        self._language = language
 
     def run(self) -> CurationDraft:
         """Return a validated draft grounded in locally listed candidates."""
@@ -44,6 +46,7 @@ class CurationAgent:
                     '"rationale":"1-1000 characters"}]}. '
                     "Select one to five unique article_id values from the listed "
                     "candidates, and include all three fields for every article."
+                    f" {self._language_instruction()}"
                 ),
             ),
             ModelMessage(role="user", content="Create today's technical daily brief."),
@@ -84,9 +87,18 @@ class CurationAgent:
                 raise CurationAgentError(
                     "Model returned neither text nor curation tools"
                 )
+            validation_problem: str | None = None
             try:
                 draft = CurationDraft.model_validate_json(reply.content)
             except ValidationError as error:
+                validation_problem = str(error)
+                draft = None
+            else:
+                if not self._matches_requested_language(draft):
+                    validation_problem = (
+                        "The requested Simplified Chinese prose was not provided"
+                    )
+            if validation_problem is not None:
                 if not correction_attempted:
                     correction_attempted = True
                     messages.extend(
@@ -101,13 +113,17 @@ class CurationAgent:
                                     '{"overview":"...","articles":[{"article_id":123,'
                                     '"summary":"...","rationale":"..."}]}. '
                                     "Every selected article must include article_id, "
-                                    "summary, and rationale."
+                                    "summary, and rationale. "
+                                    f"{self._language_instruction()}"
                                 ),
                             ),
                         ]
                     )
                     continue
-                raise CurationAgentError(f"Invalid curation result: {error}") from error
+                raise CurationAgentError(
+                    f"Invalid curation result: {validation_problem}"
+                )
+            assert draft is not None
             if candidate_ids is None:
                 raise CurationAgentError("List ranked articles before final curation")
             for article in draft.articles:
@@ -117,3 +133,22 @@ class CurationAgent:
                     )
             return draft
         raise CurationAgentError("Curation Agent exceeded eight model turns")
+
+    def _language_instruction(self) -> str:
+        if self._language is CurationLanguage.ZH:
+            return (
+                "Write overview, summary, and rationale in Simplified Chinese. "
+                "Keep technical identifiers and article IDs unchanged."
+            )
+        return "Write overview, summary, and rationale in English."
+
+    def _matches_requested_language(self, draft: CurationDraft) -> bool:
+        if self._language is CurationLanguage.EN:
+            return True
+        prose = [draft.overview]
+        for article in draft.articles:
+            prose.extend([article.summary, article.rationale])
+        return all(
+            any("\u4e00" <= character <= "\u9fff" for character in text)
+            for text in prose
+        )

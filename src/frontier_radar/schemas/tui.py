@@ -32,7 +32,15 @@ class TUIAction(StrEnum):
     LIKE = "like"
     DISLIKE = "dislike"
     UNDO = "undo"
+    SET_LANGUAGE = "set_language"
     QUIT = "quit"
+
+
+class TUILocale(StrEnum):
+    """Static presentation languages supported by the local TUI."""
+
+    ZH = "zh"
+    EN = "en"
 
 
 class TUICommand(BaseModel):
@@ -89,3 +97,9 @@ class TUIQueryInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     query: str = Field(min_length=1, max_length=512)
+
+
+class TUILanguageInput(BaseModel):
+    """Validated session-only language selection."""
+
+    language: TUILocale

@@ -1,6 +1,14 @@
 from datetime import datetime
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class CurationLanguage(StrEnum):
+    """Languages supported for model-written daily brief prose."""
+
+    ZH = "zh"
+    EN = "en"
 
 
 class CurationCandidate(BaseModel):
